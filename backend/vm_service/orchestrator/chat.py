@@ -1,0 +1,386 @@
+import json
+from typing import Optional
+from uuid import UUID
+
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
+from pydantic import BaseModel, Field
+
+from ek_client import ek_client
+from firewall.ai_firewall import check_message
+from firewall.file_processor import FILE_REJECT_MESSAGE, process_uploads
+from firewall.schemas import FirewallDecision, Intent, ProcessedFile, UserContext
+from llm.router import llm_router
+from llm.schemas import LlmGenerateRequest, LlmGenerateResponse, LlmMessage, TokenUsage
+from runtime.redis_gate import redis_concurrency_gate, set_runtime_state
+
+
+REQUEST_REJECT_MESSAGE = "Yêu cầu của bạn không thể xử lý hoặc thông tin bạn yêu cầu không tồn tại"
+FILE_CONTEXT_SOFT_ISSUES = {
+    "unsupported_file_format_or_action",
+    "unsupported_modality",
+    "missing_file_context",
+    "potential_unauthorized_file_access",
+}
+RAG_KNOWLEDGE_CATALOG = [
+    {
+        "source": "01_system_overview.md",
+        "topics": [
+            "AI VIVI / VietMAS system overview",
+            "muc tieu he thong",
+            "kien truc Enterprise Knowledge, VM Server, Frontend",
+            "phan he cau hinh chung va tai chinh",
+            "kha nang AI agent, RAG, tool, workflow, file editing",
+        ],
+    },
+    {
+        "source": "00_company_profile.md",
+        "topics": [
+            "cong ty Huong Vi Viet / Muoi Ot",
+            "danh muc san pham muoi ot",
+            "chinh sach ban si, chiet khau, dai ly",
+            "giao hang, thanh toan, cong no, doi hang, bao quan",
+            "thong tin lien he cong ty",
+        ],
+    },
+]
+
+router = APIRouter(prefix="/v1", tags=["Chat Orchestrator"])
+
+
+class ChatFirewallRead(BaseModel):
+    allowed: bool
+    risk_level: str
+    reason: str
+    detected_issues: list[str] = Field(default_factory=list)
+
+
+class ChatFileRead(BaseModel):
+    id: Optional[str] = None
+    original_file_name: str
+    file_type: str
+    sanitized: bool
+    flags: list[str] = Field(default_factory=list)
+
+
+class ChatUsageRead(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ChatResponse(BaseModel):
+    conversation_id: str
+    user_message_id: str
+    assistant_message_id: str
+    intent: Intent
+    firewall: ChatFirewallRead
+    status: str
+    answer: str
+    usage: ChatUsageRead
+    files: list[ChatFileRead] = Field(default_factory=list)
+
+
+def _json_object(text: str) -> dict:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`")
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end >= start:
+        cleaned = cleaned[start : end + 1]
+    return json.loads(cleaned)
+
+
+def _title_from_message(message: str) -> str:
+    normalized = " ".join(message.split())
+    return (normalized[:80] or "Cuộc trò chuyện mới").strip()
+
+
+def _normalize_conversation_id(conversation_id: Optional[str]) -> Optional[str]:
+    value = (conversation_id or "").strip()
+    if not value or value.lower() == "string":
+        return None
+    try:
+        return str(UUID(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="conversation_id không hợp lệ") from exc
+
+
+def _user_from_headers(
+    x_user_id: Optional[str],
+    x_user_email: Optional[str],
+    x_user_role: Optional[str],
+) -> UserContext:
+    role = (x_user_role or "manager").strip().lower()
+    if role not in {"admin", "ceo", "manager"}:
+        role = "manager"
+    user_id = (x_user_id or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REQUEST_REJECT_MESSAGE)
+    return UserContext(user_id=user_id, email=x_user_email, role=role)  # type: ignore[arg-type]
+
+
+async def classify_intent(message: str, user: UserContext, firewall: FirewallDecision, files: list[ProcessedFile]) -> Intent:
+    if files:
+        return "task_execution"
+
+    file_summary = [
+        {"file_name": file.original_file_name, "file_type": file.file_type, "flags": file.flags}
+        for file in files
+    ]
+    prompt = f"""
+Ban la intent classifier cho VietMAS. Hay phan loai yeu cau nguoi dung thanh dung mot intent.
+Chi tra ve JSON hop le:
+{{"intent": "general_chat", "reason": "short reason"}}
+
+Intent hop le:
+- rag_query: hoi dap dua tren tai lieu noi bo/RAG/chinh sach/quy trinh, gioi thieu VietMAS/AI VIVI/cong ty/san pham/he thong
+- business_query: hoi du lieu nghiep vu trong database
+- task_execution: yeu cau thao tac file, lap ke hoach tool/MCP, tao/sua/tong hop file
+- general_chat: trao doi thong thuong khong can du lieu noi bo; gom ca cau hoi ve trang thai chatbot/API/demo neu khong yeu cau truy van du lieu nghiep vu
+
+RAG knowledge catalog hien co:
+{json.dumps(RAG_KNOWLEDGE_CATALOG, ensure_ascii=False, indent=2)}
+
+Quy tac phan loai:
+- Chon rag_query neu cau hoi co the tra loi tot hon bang tri thuc trong RAG knowledge catalog, ke ca khi nguoi dung noi mo ho nhu "he thong nay" hoac "cong ty".
+- Chon business_query neu nguoi dung can so lieu/ban ghi nghiep vu dong trong database, vi du doanh thu, ton kho, chung tu, but toan, cong no, tong quan du lieu kinh doanh.
+- Chon task_execution neu nguoi dung yeu cau thao tac file/tool/workflow/tao-sua-tong-hop file.
+- Chon general_chat neu la hoi dap thong thuong, cau hoi ve trang thai API/demo/chatbot, hoac khong can tri thuc noi bo.
+
+Vai tro: {user.role}
+Firewall recommended_intent: {firewall.recommended_intent}
+Files: {json.dumps(file_summary, ensure_ascii=False)}
+Message: {message}
+"""
+    try:
+        response = await llm_router.generate(
+            LlmGenerateRequest(
+                phase="default",
+                max_output_tokens=128,
+                temperature=0,
+                messages=[LlmMessage(role="user", content=prompt)],
+                metadata={"classifier": "intent", "user_id": user.user_id, "role": user.role},
+            )
+        )
+        parsed = _json_object(response.content)
+        intent = parsed.get("intent")
+        if intent in {"rag_query", "business_query", "task_execution", "general_chat"}:
+            return intent
+    except Exception:
+        pass
+    if files:
+        return "task_execution"
+    return firewall.recommended_intent
+
+
+async def _answer_general(message: str, user: UserContext) -> LlmGenerateResponse:
+    return await llm_router.generate(
+        LlmGenerateRequest(
+            phase="default",
+            max_output_tokens=768,
+            temperature=0.2,
+            messages=[LlmMessage(role="user", content=message)],
+            metadata={"chat_route": "general_chat", "user_id": user.user_id, "role": user.role},
+        )
+    )
+
+
+async def _answer_rag(message: str, user: UserContext) -> LlmGenerateResponse:
+    results = await ek_client.rag_search(query=message, score_threshold=0.55)
+    context_blocks: list[str] = []
+    for item in results.get("results", []):
+        source = item.get("source") or {}
+        if isinstance(source, dict):
+            source_name = source.get("file_name") or source.get("document_id") or "unknown"
+        else:
+            source_name = str(source)
+        context_blocks.append(f"Source: {source_name}\n{item.get('content', '')}")
+    context = "\n\n".join(context_blocks)
+    prompt = f"""
+Tra loi nguoi dung dua tren cac chunk RAG sau. Neu khong co thong tin phu hop, noi ngan gon rang thong tin khong ton tai.
+
+Context:
+{context}
+
+Question:
+{message}
+"""
+    return await llm_router.generate(
+        LlmGenerateRequest(
+            phase="default",
+            max_output_tokens=1024,
+            temperature=0.1,
+            messages=[LlmMessage(role="user", content=prompt)],
+            metadata={"chat_route": "rag_query", "user_id": user.user_id, "role": user.role, "rag_total": results.get("total", 0)},
+        )
+    )
+
+
+async def _answer_business(message: str, user: UserContext) -> LlmGenerateResponse:
+    if user.role == "manager":
+        return LlmGenerateResponse(
+            provider="google",
+            model="policy",
+            phase="default",
+            content=REQUEST_REJECT_MESSAGE,
+            usage=TokenUsage(),
+            latency_ms=0,
+        )
+    overview = await ek_client.business_overview()
+    prompt = f"""
+Nguoi dung hoi ve du lieu nghiep vu. Hay tra loi ngan gon dua tren JSON overview sau.
+
+Overview JSON:
+{json.dumps(overview, ensure_ascii=False)}
+
+Question:
+{message}
+"""
+    return await llm_router.generate(
+        LlmGenerateRequest(
+            phase="default",
+            max_output_tokens=1024,
+            temperature=0.1,
+            messages=[LlmMessage(role="user", content=prompt)],
+            metadata={"chat_route": "business_query", "user_id": user.user_id, "role": user.role},
+        )
+    )
+
+
+async def _answer_task_execution(message: str, user: UserContext, files: list[ProcessedFile]) -> LlmGenerateResponse:
+    file_summary = [
+        {"ek_file_id": file.ek_file_id, "file_name": file.original_file_name, "file_type": file.file_type, "sanitized": file.sanitized}
+        for file in files
+    ]
+    file_text = ""
+    if file_summary:
+        file_text = "\n".join(
+            f"- {item['file_name']} ({item['file_type']}), id={item['ek_file_id']}, sanitized={item['sanitized']}"
+            for item in file_summary
+        )
+    else:
+        file_text = "- Khong co file dinh kem."
+    content = (
+        "Đã nhận yêu cầu task_execution và đã hoàn tất bước kiểm duyệt an toàn ban đầu.\n"
+        "Ở Giai đoạn 3, hệ thống mới lưu trạng thái, kiểm duyệt và chuẩn bị dữ liệu; "
+        "việc thực thi MCP/tool thật sẽ được xử lý ở Giai đoạn 4.\n\n"
+        f"File đã xử lý:\n{file_text}"
+    )
+    return LlmGenerateResponse(
+        provider="google",
+        model="policy",
+        phase="default",
+        content=content,
+        usage=TokenUsage(),
+        latency_ms=0,
+    )
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    message: str = Form(...),
+    conversation_id: Optional[str] = Form(default=None),
+    files: list[UploadFile | str] = File(default=[]),
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+    x_user_email: Optional[str] = Header(default=None, alias="X-User-Email"),
+    x_user_role: Optional[str] = Header(default=None, alias="X-User-Role"),
+):
+    user = _user_from_headers(x_user_id, x_user_email, x_user_role)
+    conversation_id = _normalize_conversation_id(conversation_id)
+    upload_files = [file for file in files if isinstance(file, UploadFile)]
+    async with redis_concurrency_gate():
+        await set_runtime_state(f"chat:{user.user_id}:last_status", "running")
+
+        try:
+            processed_files = await process_uploads(upload_files, user) if upload_files else []
+        except HTTPException as exc:
+            if exc.detail == FILE_REJECT_MESSAGE:
+                raise
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE) from exc
+
+        firewall = await check_message(message, user)
+        if processed_files and not firewall.allowed:
+            issues = set(firewall.detected_issues)
+            if issues and issues.issubset(FILE_CONTEXT_SOFT_ISSUES):
+                firewall.allowed = True
+                firewall.risk_level = "low"
+                firewall.reason = "File đã qua kiểm duyệt hardcode/AI trước bước xử lý yêu cầu."
+        if not firewall.allowed:
+            if not conversation_id:
+                conversation_id = await ek_client.create_conversation(user_id=user.user_id, title=_title_from_message(message))
+            user_message = await ek_client.create_message(
+                conversation_id=conversation_id,
+                role="user",
+                content=message,
+                status="completed",
+            )
+            assistant_message = await ek_client.create_message(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=REQUEST_REJECT_MESSAGE,
+                status="failed",
+            )
+            return ChatResponse(
+                conversation_id=conversation_id,
+                user_message_id=user_message["id"],
+                assistant_message_id=assistant_message["id"],
+                intent=firewall.recommended_intent,
+                firewall=ChatFirewallRead(**firewall.model_dump(exclude={"raw", "recommended_intent"})),
+                status="rejected",
+                answer=REQUEST_REJECT_MESSAGE,
+                usage=ChatUsageRead(),
+                files=[],
+            )
+
+        intent = await classify_intent(message, user, firewall, processed_files)
+        if not conversation_id:
+            conversation_id = await ek_client.create_conversation(user_id=user.user_id, title=_title_from_message(message))
+        user_message = await ek_client.create_message(
+            conversation_id=conversation_id,
+            role="user",
+            content=message,
+            status="completed",
+        )
+
+        if intent == "rag_query":
+            llm_response = await _answer_rag(message, user)
+        elif intent == "business_query":
+            llm_response = await _answer_business(message, user)
+        elif intent == "task_execution":
+            llm_response = await _answer_task_execution(message, user, processed_files)
+        else:
+            llm_response = await _answer_general(message, user)
+
+        assistant_message = await ek_client.create_message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=llm_response.content,
+            status="completed",
+            input_tokens=llm_response.usage.input_tokens,
+            output_tokens=llm_response.usage.output_tokens,
+        )
+        await set_runtime_state(f"chat:{user.user_id}:last_status", "completed")
+
+        return ChatResponse(
+            conversation_id=conversation_id,
+            user_message_id=user_message["id"],
+            assistant_message_id=assistant_message["id"],
+            intent=intent,
+            firewall=ChatFirewallRead(**firewall.model_dump(exclude={"raw", "recommended_intent"})),
+            status="completed",
+            answer=llm_response.content,
+            usage=ChatUsageRead(**llm_response.usage.model_dump()),
+            files=[
+                ChatFileRead(
+                    id=file.ek_file_id,
+                    original_file_name=file.original_file_name,
+                    file_type=file.file_type,
+                    sanitized=file.sanitized,
+                    flags=file.flags,
+                )
+                for file in processed_files
+            ],
+        )

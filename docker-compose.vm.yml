@@ -1,0 +1,79 @@
+################################################################################
+# docker-compose.vm.yml
+# VM / AI Tier - runs on Linux VM (VirtualBox)
+#
+# Services:
+#   redis-vm   : Redis for request queue and runtime task state
+#   vm-service : FastAPI service for orchestrator, LLM router, and MCP tools
+#
+# Run on Linux VM:
+#   docker compose -f docker-compose.vm.yml up -d
+#   docker compose -f docker-compose.vm.yml ps
+#   docker compose -f docker-compose.vm.yml logs -f
+#   docker compose -f docker-compose.vm.yml down
+#
+# Copy this file to the Linux VM together with backend/vm_service/.
+# Set EK_SERVICE_URL to the real LAN IP of the Laptop tier.
+################################################################################
+
+version: "3.9"
+
+services:
+  redis-vm:
+    image: redis:7-alpine
+    container_name: vietmas-redis-vm
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_VM_PASSWORD:-changeme}
+      --maxmemory 512mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redis_vm_data:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_VM_PASSWORD:-changeme}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - vm-net
+
+  vm-service:
+    build:
+      context: ./backend/vm_service
+      dockerfile: Dockerfile
+    container_name: vietmas-vm-service
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://:${REDIS_VM_PASSWORD:-changeme}@redis-vm:6379/0
+      EK_SERVICE_URL: ${EK_SERVICE_URL:-http://192.168.1.100:8000}
+      EK_INTERNAL_API_KEY: ${EK_INTERNAL_API_KEY:-changeme_internal_api_key}
+      APP_ENV: ${APP_ENV:-development}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_LLM_MODEL: ${GOOGLE_LLM_MODEL:-gemini-3.1-flash-lite}
+      ANTHROPIC_LLM_MODEL: ${ANTHROPIC_LLM_MODEL:-claude-sonnet-5}
+      GOOGLE_INPUT_USD_PER_MTOK: ${GOOGLE_INPUT_USD_PER_MTOK:-0.25}
+      GOOGLE_OUTPUT_USD_PER_MTOK: ${GOOGLE_OUTPUT_USD_PER_MTOK:-1.50}
+      ANTHROPIC_INPUT_USD_PER_MTOK: ${ANTHROPIC_INPUT_USD_PER_MTOK:-3.00}
+      ANTHROPIC_OUTPUT_USD_PER_MTOK: ${ANTHROPIC_OUTPUT_USD_PER_MTOK:-15.00}
+    volumes:
+      - ./backend/vm_service:/app
+    ports:
+      - "8001:8001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis-vm:
+        condition: service_healthy
+    networks:
+      - vm-net
+
+volumes:
+  redis_vm_data:
+
+networks:
+  vm-net:
+    driver: bridge
