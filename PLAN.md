@@ -157,7 +157,7 @@ Chỉ dẫn:
 - [x] Lưu hội thoại multi-turn bền vững vào Postgres qua Enterprise Knowledge; Redis giữ state runtime ngắn hạn
 - [x] Xây xử lý upload file ở VM: raw upload, hardcode validation, `.xlsx` sanitize, `.md` flag, `.png` firewall
 - [x] Xây bảng/API nội bộ EK lưu file sạch và metadata kiểm duyệt
-- [ ] Thiết kế multi-step orchestration khi MCP sẵn sàng: `ai_firewall` -> planner -> các bước `rag_query`/`business_query`/`mcp_tool` -> tổng hợp câu trả lời cuối
+- [ ] Thiết kế luồng xử lý chuẩn cho orchestration: `ai_firewall` -> `planner` -> `execution` -> `response`
 
 ### Giai đoạn 4 — Tích hợp MCP Tools  (5-7 ngày)
 

@@ -30,6 +30,6 @@ backend/vm_service/storage/
 backend/enterprise_knowledge/storage/
 
 # Cache
-cache/huggingface/*
-!cache/huggingface/.gitkeep
+cache/
+
 
