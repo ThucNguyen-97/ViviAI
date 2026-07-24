@@ -1,14 +1,10 @@
-"""
-Enterprise Knowledge Service — Giai đoạn 1
-FastAPI app với API endpoint ingest tài liệu RAG.
-"""
-
 import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,6 +26,20 @@ from fastapi.security import APIKeyHeader
 
 api_key_header = APIKeyHeader(name="X-Internal-Api-Key", auto_error=False)
 
+
+class EKSecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Middleware thiết lập Security Headers cho EK Service."""
+
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        # EK chỉ giao tiếp nội bộ, không có frontend trực tiếp nên CSP cực kỳ hạn chế
+        response.headers["Content-Security-Policy"] = "default-src 'none';"
+        return response
+
+
 app = FastAPI(
     title="VietMAS Enterprise Knowledge Service",
     version="0.1.0",
@@ -37,19 +47,23 @@ app = FastAPI(
     dependencies=[Depends(api_key_header)],
 )
 
+# Security Headers Middleware
+app.add_middleware(EKSecurityHeadersMiddleware)
 
+# CORS: Thu hẹp — EK chỉ chấp nhận request từ VM Service (localhost:8001)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Sẽ thu hẹp lại ở giai đoạn Auth
+    allow_origins=["http://localhost:8001"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-Internal-Api-Key"],
 )
 
 app.include_router(business_router)
 app.include_router(rag_router)
 app.include_router(admin_dashboard_router)
 app.include_router(internal_router)
+
 
 
 # ── Health check ────────────────────────────────────────────────────────────

@@ -4,12 +4,15 @@ from typing import Any, Optional
 import httpx
 
 from core.config import settings
+from runtime.egress_guard import validate_egress_url
 
 
 class EnterpriseKnowledgeClient:
     def __init__(self) -> None:
         self.base_url = settings.EK_SERVICE_URL.rstrip("/")
+        validate_egress_url(self.base_url)
         self.headers = {"X-Internal-Api-Key": settings.EK_INTERNAL_API_KEY}
+
 
     async def create_conversation(self, *, user_id: str, title: str, summary: Optional[str] = None) -> str:
         payload = {"user_id": user_id, "title": title, "summary": summary}
