@@ -30,14 +30,28 @@ api_key_header = APIKeyHeader(name="X-Internal-Api-Key", auto_error=False)
 class EKSecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Middleware thiết lập Security Headers cho EK Service."""
 
+    # Các path của Swagger UI cần cho phép tải JS/CSS từ CDN
+    _SWAGGER_PATHS = {"/docs", "/redoc", "/openapi.json"}
+
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        # EK chỉ giao tiếp nội bộ, không có frontend trực tiếp nên CSP cực kỳ hạn chế
-        response.headers["Content-Security-Policy"] = "default-src 'none';"
+
+        # Swagger UI cần tải JS/CSS từ CDN jsdelivr — cho phép ở /docs và /redoc
+        # Tất cả route API khác (/internal, /admin, ...) giữ CSP cực kỳ hạn chế
+        if request.url.path in self._SWAGGER_PATHS:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https://fastapi.tiangolo.com;"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = "default-src 'none';"
         return response
+
 
 
 app = FastAPI(
