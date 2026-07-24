@@ -203,6 +203,8 @@ Chỉ dẫn:
 - [ ] Ghi log hành động ghi/sửa dữ liệu (audit trail)
 - [ ] Xây cơ chế "dừng khẩn cấp"
 - [ ] Xây alerting cơ bản khi có lỗi hoặc hành động bất thường
+- [ ] Tích hợp notification service (Email / Slack / Telegram Bot) vào hàm `_alert_admin_security_violation()` trong `egress_guard.py` để Admin nhận cảnh báo tức thì khi phát hiện vi phạm bảo mật Egress Whitelist. *(Hiện tại hệ thống đã có stub: ghi CRITICAL log ra stdout + file `/app/logs/security_alerts.log` — chỉ cần thêm kênh gửi thông báo vào đây.)*
+
 
 ### Giai đoạn 7 — User UI trên Firebase Hosting (4-5 ngày)
 
