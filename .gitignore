@@ -22,7 +22,6 @@ Thumbs.db
 
 # Logs
 *.log
-logs/
 
 # Runtime/generated files
 .tmp_pydeps/

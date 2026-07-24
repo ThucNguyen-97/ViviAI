@@ -1,10 +1,14 @@
+"""
+Enterprise Knowledge Service — Giai đoạn 1
+FastAPI app với API endpoint ingest tài liệu RAG.
+"""
+
 import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, Query, Request, Response
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,34 +30,6 @@ from fastapi.security import APIKeyHeader
 
 api_key_header = APIKeyHeader(name="X-Internal-Api-Key", auto_error=False)
 
-
-class EKSecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Middleware thiết lập Security Headers cho EK Service."""
-
-    # Các path của Swagger UI cần cho phép tải JS/CSS từ CDN
-    _SWAGGER_PATHS = {"/docs", "/redoc", "/openapi.json"}
-
-    async def dispatch(self, request: Request, call_next):
-        response: Response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-
-        # Swagger UI cần tải JS/CSS từ CDN jsdelivr — cho phép ở /docs và /redoc
-        # Tất cả route API khác (/internal, /admin, ...) giữ CSP cực kỳ hạn chế
-        if request.url.path in self._SWAGGER_PATHS:
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "img-src 'self' data: https://fastapi.tiangolo.com;"
-            )
-        else:
-            response.headers["Content-Security-Policy"] = "default-src 'none';"
-        return response
-
-
-
 app = FastAPI(
     title="VietMAS Enterprise Knowledge Service",
     version="0.1.0",
@@ -61,23 +37,19 @@ app = FastAPI(
     dependencies=[Depends(api_key_header)],
 )
 
-# Security Headers Middleware
-app.add_middleware(EKSecurityHeadersMiddleware)
 
-# CORS: Thu hẹp — EK chỉ chấp nhận request từ VM Service (localhost:8001)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8001"],
+    allow_origins=["*"],  # Sẽ thu hẹp lại ở giai đoạn Auth
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-Internal-Api-Key"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(business_router)
 app.include_router(rag_router)
 app.include_router(admin_dashboard_router)
 app.include_router(internal_router)
-
 
 
 # ── Health check ────────────────────────────────────────────────────────────

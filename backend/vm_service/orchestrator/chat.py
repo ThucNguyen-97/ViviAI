@@ -2,7 +2,8 @@ import json
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Form, Header, HTTPException, Request, UploadFile, status
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from pydantic import BaseModel, Field
 
 from ek_client import ek_client
@@ -288,18 +289,11 @@ async def create_execution_plan(
     files: list[ProcessedFile],
     intent: Intent,
 ) -> ExecutionPlan:
-    file_info = ", ".join([f.original_file_name for f in files]) if files else "Khong co file"
     prompt = f"""
 Ban la AI Planner cho VietMAS. Hay phan tich yeu cau nguoi dung va sinh ra Ke hoach thuc thi (Execution Plan) gom chuoi cac buoc (steps) can thuc hien.
-
-QUY TAC DAT plan_name:
-Trường "plan_name" PHẢI là một câu tiếng Việt cụ thể (5-8 từ) phản ánh CHÍNH XÁC mục tiêu câu hỏi người dùng.
-Ví dụ: "Kế hoạch tra cứu báo cáo doanh thu công ty", "Kế hoạch phân tích tệp dữ liệu đính kèm", "Kế hoạch tra cứu chính sách giao hàng RAG".
-KHÔNG sử dụng các tên chung chung như "Kế hoạch thực thi tác vụ" hay "Kế hoạch xử lý yêu cầu".
-
 Chi tra ve JSON hop le theo cau truc:
 {{
-  "plan_name": "Kế hoạch tra cứu chính sách bán hàng RAG",
+  "plan_name": "Kế hoạch xử lý yêu cầu",
   "total_steps": 2,
   "steps": [
     {{
@@ -323,12 +317,10 @@ Cac loai action hop le:
 - mcp_tool: thao tac file hoac tool
 - llm_synthesize: tong hop ket qua tu cac buoc va sinh phan hoi
 
-Yeu cau nguoi dung: {message}
-Y dinh khoi tao: {intent}
-Tep dinh kem: {file_info}
-Vai tro nguoi dung: {user.role}
+Message: {message}
+Intent khoi tao: {intent}
+Role: {user.role}
 """
-
     try:
         response = await llm_router.generate(
             LlmGenerateRequest(
@@ -364,19 +356,68 @@ Vai tro nguoi dung: {user.role}
 
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["message"],
+                        "properties": {
+                            "message": {
+                                "type": "string",
+                                "description": "Nội dung tin nhắn gửi đến AI",
+                            },
+                            "conversation_id": {
+                                "type": "string",
+                                "nullable": True,
+                                "description": "UUID hội thoại (để trống để tạo mới)",
+                            },
+                            "files": {
+                                "type": "array",
+                                "items": {"type": "string", "format": "binary"},
+                                "nullable": True,
+                                "description": (
+                                    "File đính kèm (tối đa 2 file/request). "
+                                    "Định dạng cho phép: .png (≤10MB), .md (≤2MB), .xlsx (≤20MB). "
+                                    "File sẽ được kiểm duyệt qua AI Firewall Lớp 2 trước khi xử lý."
+                                ),
+                            },
+                        },
+                    }
+                }
+            },
+        }
+    },
+)
+
 async def chat(
-    message: str = Form(..., description="Câu hỏi / yêu cầu của người dùng"),
-    conversation_id: Optional[str] = Form(default=None, description="ID hội thoại cũ (để tiếp tục); để trống để tạo mới"),
-    files: list[UploadFile] = File(default=[], description="File đính kèm (.xlsx, .md, .png). Không bắt buộc."),
+    request: Request,
+    message: str = Form(...),
+    conversation_id: Optional[str] = Form(default=None),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     x_user_email: Optional[str] = Header(default=None, alias="X-User-Email"),
     x_user_role: Optional[str] = Header(default=None, alias="X-User-Role"),
 ):
     user = _user_from_headers(x_user_id, x_user_email, x_user_role)
     conversation_id = _normalize_conversation_id(conversation_id)
-    # Lọc bỏ các entry rỗng mà Swagger UI gửi khi tick "Send empty value"
-    upload_files = [f for f in files if f and f.filename]
+    # Parse files từ raw form data - lọc bỏ empty string do Swagger gửi (-F 'files=')
+    # Dùng StarletteUploadFile thay fastapi.UploadFile vì Starlette tạo parent class instance,
+    # isinstance(v, fastapi.UploadFile) sẽ False với starlette.UploadFile object
+    try:
+        form = await request.form()
+        upload_files: list[UploadFile] = [
+            v for v in form.getlist("files")
+            if isinstance(v, StarletteUploadFile) and v.filename
+        ]
+    except Exception:
+        upload_files = []
+
+
 
     async with redis_concurrency_gate():
         await set_runtime_state(f"chat:{user.user_id}:last_status", "running")

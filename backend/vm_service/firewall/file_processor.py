@@ -45,18 +45,58 @@ def _safe_name(filename: str) -> str:
 
 
 def _check_signature(data: bytes, raw_path: Path, extension: str) -> None:
-    """Kiểm tra Signature Magic Bytes và cấu trúc tệp chuẩn bằng code Backend."""
+    """Kiểm tra Signature Magic Bytes và cấu trúc tệp chuẩn bằng code Backend.
+
+    Defense-in-depth chống giả danh đuôi file:
+    - .png: kiểm tra magic bytes PNG chính xác 8 byte đầu
+    - .xlsx: kiểm tra ZIP structure + nội bộ phải có entry OOXML hợp lệ
+    - .md : kiểm tra UTF-8 + không phải binary file giả danh text
+    """
+    # Danh sách magic bytes của các file binary phổ biến (dùng để loại trừ cho .md)
+    KNOWN_BINARY_SIGNATURES = [
+        b"\x89PNG\r\n\x1a\n",   # PNG
+        b"PK\x03\x04",          # ZIP / XLSX / DOCX / JAR
+        b"PK\x05\x06",          # ZIP empty
+        b"MZ",                  # EXE / DLL (Windows PE)
+        b"\x7fELF",             # ELF binary (Linux)
+        b"\xff\xd8\xff",        # JPEG
+        b"GIF87a", b"GIF89a",   # GIF
+        b"%PDF",                # PDF
+        b"\xd0\xcf\x11\xe0",    # OLE2 (doc/xls cũ)
+        b"RIFF",                # WAV / AVI
+        b"\x1f\x8b",            # GZIP
+        b"BZh",                 # BZIP2
+        b"\xfd7zXZ",            # XZ
+    ]
+
     if extension == ".png":
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+
     elif extension == ".xlsx":
+        # Lớp 1: magic bytes ZIP
         if not data.startswith(b"PK\x03\x04") or not zipfile.is_zipfile(raw_path):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+        # Lớp 2: ZIP phải chứa cấu trúc OOXML hợp lệ — ZIP thường không có entry này
+        try:
+            with zipfile.ZipFile(raw_path, "r") as zf:
+                names = zf.namelist()
+                if "xl/workbook.xml" not in names and "[Content_Types].xml" not in names:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+        except zipfile.BadZipFile:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+
     elif extension == ".md":
+        # Lớp 1: phải decode được UTF-8
         try:
             data.decode("utf-8")
         except UnicodeDecodeError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+        # Lớp 2: không được bắt đầu bằng known binary magic bytes (chống script/binary giả danh .md)
+        for sig in KNOWN_BINARY_SIGNATURES:
+            if data.startswith(sig):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+
 
 
 def sanitize_md_for_prompt(md_content: str) -> str:
@@ -88,7 +128,15 @@ def _sanitize_xlsx(raw_path: Path, target_path: Path) -> None:
             for cell in row:
                 target[cell.coordinate].value = cell.value
 
+    # Xóa toàn bộ metadata: openpyxl tự thêm creator mặc định → phải clear thủ công
+    clean.properties.creator = ""
+    clean.properties.lastModifiedBy = ""
+    clean.properties.description = ""
+    clean.properties.subject = ""
+    clean.properties.title = ""
+    clean.properties.keywords = ""
     clean.save(target_path)
+
 
 
 def _resize_and_strip_png(raw_path: Path, target_path: Path, max_dimension: int = 1024) -> bool:
