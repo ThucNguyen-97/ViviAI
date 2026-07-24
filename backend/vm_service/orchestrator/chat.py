@@ -366,16 +366,17 @@ Vai tro nguoi dung: {user.role}
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
-    message: str = Form(...),
-    conversation_id: Optional[str] = Form(default=None),
-    files: list[UploadFile] = File(default=[]),
+    message: str = Form(..., description="Câu hỏi / yêu cầu của người dùng"),
+    conversation_id: Optional[str] = Form(default=None, description="ID hội thoại cũ (để tiếp tục); để trống để tạo mới"),
+    files: list[UploadFile] = File(default=[], description="File đính kèm (.xlsx, .md, .png). Không bắt buộc."),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     x_user_email: Optional[str] = Header(default=None, alias="X-User-Email"),
     x_user_role: Optional[str] = Header(default=None, alias="X-User-Role"),
 ):
     user = _user_from_headers(x_user_id, x_user_email, x_user_role)
     conversation_id = _normalize_conversation_id(conversation_id)
-    upload_files = files
+    # Lọc bỏ các entry rỗng mà Swagger UI gửi khi tick "Send empty value"
+    upload_files = [f for f in files if f and f.filename]
 
     async with redis_concurrency_gate():
         await set_runtime_state(f"chat:{user.user_id}:last_status", "running")
