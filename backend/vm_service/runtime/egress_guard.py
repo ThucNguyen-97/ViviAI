@@ -94,21 +94,34 @@ def validate_egress_url(url: str) -> None:
 class ContentSecurityPolicyMiddleware(BaseHTTPMiddleware):
     """Middleware thiết lập Content Security Policy (CSP) và các Header bảo mật nghiêm ngặt."""
 
+    # Các path của Swagger UI cần cho phép tải JS/CSS từ CDN
+    _SWAGGER_PATHS = {"/docs", "/redoc", "/openapi.json"}
+
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
-        
-        # CSP Policy: Chỉ cho phép kết nối nội bộ EK và API LLM chính thức
-        csp_policy = (
-            "default-src 'none'; "
-            "script-src 'self'; "
-            "connect-src 'self' http://localhost:8000 http://localhost:8001 https://generativelanguage.googleapis.com https://api.anthropic.com; "
-            "img-src 'self' data:; "
-            "style-src 'self' 'unsafe-inline';"
-        )
-        
+
+        if request.url.path in self._SWAGGER_PATHS:
+            # Swagger UI cần tải JS/CSS từ CDN jsdelivr
+            csp_policy = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: https://fastapi.tiangolo.com;"
+            )
+        else:
+            # API routes: CSP nghiêm ngặt, chỉ cho phép kết nối tới EK và LLM APIs
+            csp_policy = (
+                "default-src 'none'; "
+                "script-src 'self'; "
+                "connect-src 'self' http://localhost:8000 http://localhost:8001 https://generativelanguage.googleapis.com https://api.anthropic.com; "
+                "img-src 'self' data:; "
+                "style-src 'self' 'unsafe-inline';"
+            )
+
         response.headers["Content-Security-Policy"] = csp_policy
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
+
