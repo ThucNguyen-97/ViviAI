@@ -90,5 +90,36 @@ class EnterpriseKnowledgeClient:
             response.raise_for_status()
             return response.json()
 
+    async def create_agent_plan(
+        self,
+        *,
+        message_id: str,
+        plan_name: Optional[str] = "Kế hoạch thực thi tác vụ",
+        raw_plan: dict[str, Any],
+        steps: list[dict[str, Any]],
+        mcp_tools: Optional[list] = None,
+        total_steps: int = 0,
+        status: str = "success",
+    ) -> dict[str, Any]:
+        payload = {
+            "message_id": message_id,
+            "plan_name": plan_name,
+            "raw_plan": raw_plan,
+            "steps": steps,
+            "mcp_tools": mcp_tools or [],
+            "total_steps": total_steps or len(steps),
+            "status": status,
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                f"{self.base_url}/internal/v1/agent-plans",
+                headers=self.headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+
 
 ek_client = EnterpriseKnowledgeClient()
+

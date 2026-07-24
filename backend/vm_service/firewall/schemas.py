@@ -14,12 +14,28 @@ class UserContext(BaseModel):
 
 
 class FirewallDecision(BaseModel):
+    is_valid: bool = True
     allowed: bool = True
     risk_level: RiskLevel = "low"
     reason: str = ""
     detected_issues: list[str] = Field(default_factory=list)
     recommended_intent: Intent = "general_chat"
+    details: dict[str, Any] = Field(default_factory=dict)
     raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionStep(BaseModel):
+    step_number: int
+    step_name: str  # Tên bước (VD: "Đọc file Excel tải lên")
+    action: str  # Loại action (VD: "mcp_tool", "rag_search", "sql_query", "llm_synthesize")
+    thought: str  # Mô tả tư duy / nội dung công việc của bước
+
+
+class ExecutionPlan(BaseModel):
+    plan_name: str = Field(default="Kế hoạch thực thi tác vụ", description="Tên kế hoạch thực thi")
+    total_steps: int = 0
+    steps: list[ExecutionStep] = Field(default_factory=list)
+
 
 
 class ProcessedFile(BaseModel):
@@ -31,3 +47,4 @@ class ProcessedFile(BaseModel):
     sanitized: bool = False
     flags: list[str] = Field(default_factory=list)
     ek_file_id: Optional[str] = None
+

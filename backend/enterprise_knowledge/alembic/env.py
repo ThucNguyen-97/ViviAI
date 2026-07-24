@@ -11,10 +11,11 @@ from core.config import settings
 from db.base import Base
 from db.models import (
     User, RagDocument, Document, Chunk, Voucher,
-    Conversation, Message, AgentPlan, AgentTask,
+    Conversation, Message, AgentPlan, AgentStep,
     LlmProviderCall, CleanFile,
     Partner, Inventory, GeneralJournal, GeneralJournalLine,
 )
+
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

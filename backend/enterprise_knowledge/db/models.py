@@ -200,7 +200,7 @@ class Message(Base):
 
 
 class AgentPlan(Base):
-    """Báº£ng lÆ°u trá»¯ káº¿ hoáº¡ch tá»•ng thá»ƒ suy luáº­n cá»§a AI (agent_plans)."""
+    """Bảng lưu trữ kế hoạch tổng thể suy luận của AI (agent_plans)."""
     __tablename__ = "agent_plans"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -209,6 +209,7 @@ class AgentPlan(Base):
     message_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
     )
+    plan_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     raw_plan: Mapped[dict] = mapped_column(JSONB, nullable=False)
     mcp_tools: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     total_steps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -223,23 +224,23 @@ class AgentPlan(Base):
 
     # Relationships
     message: Mapped["Message"] = relationship("Message", back_populates="agent_plans")
-    tasks: Mapped[List["AgentTask"]] = relationship(
-        "AgentTask", back_populates="plan", cascade="all, delete-orphan"
+    steps: Mapped[List["AgentStep"]] = relationship(
+        "AgentStep", back_populates="plan", cascade="all, delete-orphan"
     )
 
 
-class AgentTask(Base):
-    """Báº£ng lÆ°u trá»¯ chi tiáº¿t tá»«ng bÆ°á»›c thá»±c thi trong káº¿ hoáº¡ch cá»§a AI (agent_tasks)."""
-    __tablename__ = "agent_tasks"
+class AgentStep(Base):
+    """Bảng lưu trữ chi tiết từng bước thực thi trong kế hoạch của AI (agent_steps)."""
+    __tablename__ = "agent_steps"
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4
     )
-    agent_plans_id: Mapped[uuid.UUID] = mapped_column(
+    agent_plan_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("agent_plans.id", ondelete="CASCADE"), nullable=False
     )
     step_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    step_name: Mapped[str] = mapped_column(String(255), nullable=False)
     thought: Mapped[str] = mapped_column(Text, nullable=False)
     action: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     action_input: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -256,7 +257,8 @@ class AgentTask(Base):
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Relationships
-    plan: Mapped["AgentPlan"] = relationship("AgentPlan", back_populates="tasks")
+    plan: Mapped["AgentPlan"] = relationship("AgentPlan", back_populates="steps")
+
 
 
 class LlmProviderCall(Base):

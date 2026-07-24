@@ -1,4 +1,4 @@
-﻿# Kế hoạch xây dựng hệ thống AI hỗ trợ vận hành doanh nghiệp
+# Kế hoạch xây dựng hệ thống AI hỗ trợ vận hành doanh nghiệp
 
 ## 1. Tổng quan hệ thống
 
@@ -140,24 +140,32 @@ Chỉ dẫn:
 - [x] Xác thực demo dùng header `X-User-Id`, `X-User-Email`, `X-User-Role`; Giai đoạn 5 thay bằng Firebase JWT
 - [x] Redis Giai đoạn 3 dùng concurrency gate/state cơ bản, chưa cần worker process riêng
 - [x] File upload tối đa 2 file/request; chỉ cho phép `.xlsx`, `.png`, `.md`; `.md` tối đa 2 MB, `.png` tối đa 10 MB, `.xlsx` tối đa 20 MB
-- [x] File raw mới upload lưu tạm ở VM `backend/vm_service/storage/uploads/`; file đã kiểm duyệt/làm sạch lưu ở EK; metadata file sạch lưu ở EK
-- [x] MIME chỉ check/log phụ, không tin tuyệt đối; hard rule là extension + parser đọc được file
-- [x] `.xlsx` sanitize bằng `openpyxl` theo hướng `data_only=True`, `keep_vba=False`, `keep_links=False`
-- [x] `.md` hardcode flag HTML/script, `file://`, prompt-injection phrases để tăng tín hiệu firewall, không auto reject chỉ vì flag
-- [x] `.png` không OCR ở Giai đoạn 3; dùng Gemini multimodal firewall nếu cần
-- [x] Nếu file không hợp lệ thì reject cả request với câu: `Tệp tin bạn gửi không phù hợp với chính sách hệ thống`
-- [x] Nếu message/quyền/prompt-injection không hợp lệ thì trả: `Yêu cầu của bạn không thể xử lý hoặc thông tin bạn yêu cầu không tồn tại`
-- [x] Quyền nghiệp vụ: `admin`/`ceo` được query rộng; `manager` chỉ được query dữ liệu của chính họ khi API có ownership đáng tin, nếu chưa có thì không trả dữ liệu nghiệp vụ rộng
-- [x] Giai đoạn 3 giữ orchestrator ở mức single-intent ổn định; chưa triển khai multi-step RAG + SQL + MCP/tool vì MCP sẽ được xây ở Giai đoạn 4
+- [x] File raw mới upload lưu tạm ở VM (`backend/vm_service/storage/uploads/raw/`); file đã kiểm duyệt/làm sạch lưu tại VM (`backend/vm_service/storage/uploads/clean/`). EK chỉ chứa SQL và RAG, KHÔNG lưu tệp tin upload của người dùng.
+- [x] MIME chỉ check/log phụ, không tin tuyệt đối; hard rule là extension + parser đọc được file.
+- [x] AI Firewall 2 lớp:
+  - **Lớp 1 (Check Role)**: Check role qua LLM dựa trên Permission Matrix, trả về JSON `{"is_valid": bool, "reason": str, "details": dict}`.
+  - **Lớp 2 (Check File - 100% Backend Hard-code)**:
+    - Xóa toàn bộ Metadata ẩn cho MỌI LOẠI FILE (không cần check độc hại hay không).
+    - `.png`: Check Magic Bytes 8 ký tự `b"\x89PNG\r\n\x1a\n"`, resize bằng Pillow nếu kích thước lớn để tiết kiệm token.
+    - `.md`: Xóa URL link `[text](url)` -> `text` trực tiếp bằng Regex `re.sub`.
+    - `.xlsx`: Kiểm tra định dạng ZIP bằng `zipfile.is_zipfile()`, làm sạch qua `openpyxl` (xóa macro/VBA, xóa link ngoại vi, xóa công thức hàm, `data_only=True`).
+- [x] VM CHỈ ĐƯỢC GỬI FILE ĐÃ CLEANED LÊN LLM API.
+- [x] Bảo mật kết nối nghiêm ngặt: VM bị cấm gửi request đến domain lạ ngoài danh sách trắng (chỉ gửi tới EK Service và official LLM APIs). EK chỉ chấp nhận và thực thi các request nội bộ từ VM qua khóa `X-Internal-Api-Key`.
+- [x] Agent Planner: Cấu trúc Kế hoạch thực thi (Execution Plan) chuẩn hóa gồm tên kế hoạch (`plan_name`), số bước (`total_steps`), và danh sách các bước (`steps`) chi tiết (`step_number`, tên bước `step_name`, `action`, `thought`), quản lý và lưu trữ trực tiếp bởi bảng `agent_plans` và `agent_steps` trong CSDL PostgreSQL EK.
 
 #### Việc cần làm giai đoạn này
 - [x] Thiết kế orchestrator state graph: `ai_firewall` -> intent classifier -> route `rag_query`/`business_query`/`task_execution`/`general_chat`
 - [x] Kết nối orchestrator với LLM Router và Enterprise Knowledge API
 - [x] Xây hàng đợi/concurrency gate Redis để giãn cách khi nhiều người dùng đồng thời
 - [x] Lưu hội thoại multi-turn bền vững vào Postgres qua Enterprise Knowledge; Redis giữ state runtime ngắn hạn
-- [x] Xây xử lý upload file ở VM: raw upload, hardcode validation, `.xlsx` sanitize, `.md` flag, `.png` firewall
-- [x] Xây bảng/API nội bộ EK lưu file sạch và metadata kiểm duyệt
-- [ ] Thiết kế luồng xử lý chuẩn cho orchestration: `ai_firewall` -> `planner` -> `execution` -> `response`
+- [x] Xây xử lý upload file ở VM: raw upload, 100% hardcode backend validation (signature check, strip metadata cho mọi file, `.xlsx` zipfile/openpyxl sanitize, `.md` regex link removal, `.png` resize tiết kiệm token), lưu file sạch cục bộ tại VM (`storage/uploads/clean/`) và chỉ gửi file sạch lên LLM API
+- [x] Nâng cấp AI Firewall check role theo Permission Matrix và định dạng JSON `is_valid` / `reason` / `details`
+- [x] Nâng cấp Agent Planner sinh Kế hoạch thực thi đa bước chi tiết (`plan_name`, `total_steps`, `step_number`, `step_name`, `action`, `thought`) và liên kết lưu trữ vào bảng `agent_plans` / `agent_steps`
+- [x] Thi hành bảo mật kết nối: Khóa xác thực `X-Internal-Api-Key` cho EK và kiểm soát kết nối đầu ra cho VM
+
+
+
+
 
 ### Giai đoạn 4 — Tích hợp MCP Tools  (5-7 ngày)
 

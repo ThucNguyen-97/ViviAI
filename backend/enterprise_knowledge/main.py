@@ -26,11 +26,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from fastapi.security import APIKeyHeader
+
+api_key_header = APIKeyHeader(name="X-Internal-Api-Key", auto_error=False)
+
 app = FastAPI(
     title="VietMAS Enterprise Knowledge Service",
     version="0.1.0",
     description="API quản lý tri thức doanh nghiệp: ingest Markdown RAG, truy vấn vector DB.",
+    dependencies=[Depends(api_key_header)],
 )
+
 
 app.add_middleware(
     CORSMiddleware,

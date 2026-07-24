@@ -12,7 +12,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from db.base import AsyncSessionLocal
 from db.models import (
     AgentPlan,
-    AgentTask,
+    AgentStep,
     Conversation,
     Document,
     GeneralJournal,
@@ -23,6 +23,7 @@ from db.models import (
     User,
     Voucher,
 )
+
 
 
 DEMO_USER_IDS = [
@@ -297,6 +298,7 @@ async def seed_conversations(session) -> None:
 
     sales_plan = AgentPlan(
         message_id=assistant_sales_message.id,
+        plan_name="Kế hoạch tổng hợp doanh thu Q2",
         raw_plan={
             "intent": "spreadsheet_transform",
             "steps": [
@@ -330,6 +332,7 @@ async def seed_conversations(session) -> None:
     )
     failed_plan = AgentPlan(
         message_id=failed_contract_message.id,
+        plan_name="Kế hoạch sửa thông tin hợp đồng từ ảnh",
         raw_plan={
             "intent": "document_update_from_image",
             "steps": ["read_image", "read_word", "update_word"],
@@ -362,10 +365,10 @@ async def seed_conversations(session) -> None:
 
     session.add_all(
         [
-            AgentTask(
-                agent_plans_id=sales_plan.id,
+            AgentStep(
+                agent_plan_id=sales_plan.id,
                 step_number=1,
-                label="Đọc file Excel",
+                step_name="Đọc file Excel",
                 thought="Cần kiểm tra các sheet và cột doanh thu trước khi tổng hợp.",
                 action="excel.read_workbook",
                 action_input='{"file_url":"https://storage.example.com/demo/bao_cao_doanh_thu_q2.xlsx"}',
@@ -376,10 +379,10 @@ async def seed_conversations(session) -> None:
                 started_at=now_minus(days=2, hours=4, minutes=54),
                 ended_at=now_minus(days=2, hours=4, minutes=53),
             ),
-            AgentTask(
-                agent_plans_id=sales_plan.id,
+            AgentStep(
+                agent_plan_id=sales_plan.id,
                 step_number=2,
-                label="Tổng hợp doanh thu",
+                step_name="Tổng hợp doanh thu",
                 thought="Nhóm dữ liệu theo tháng và cộng doanh thu thuần.",
                 action="excel.aggregate",
                 action_input='{"group_by":"month","metric":"net_revenue"}',
@@ -390,10 +393,10 @@ async def seed_conversations(session) -> None:
                 started_at=now_minus(days=2, hours=4, minutes=52),
                 ended_at=now_minus(days=2, hours=4, minutes=50),
             ),
-            AgentTask(
-                agent_plans_id=sales_plan.id,
+            AgentStep(
+                agent_plan_id=sales_plan.id,
                 step_number=3,
-                label="Tạo file kết quả",
+                step_name="Tạo file kết quả",
                 thought="Ghi bảng tổng hợp ra workbook mới và lưu vào thư viện.",
                 action="excel.write_workbook",
                 action_input='{"output_name":"tong_hop_doanh_thu_q2.xlsx"}',
@@ -404,10 +407,10 @@ async def seed_conversations(session) -> None:
                 started_at=now_minus(days=2, hours=4, minutes=49),
                 ended_at=now_minus(days=2, hours=4, minutes=47),
             ),
-            AgentTask(
-                agent_plans_id=failed_plan.id,
+            AgentStep(
+                agent_plan_id=failed_plan.id,
                 step_number=1,
-                label="Đọc ảnh định danh",
+                step_name="Đọc ảnh định danh",
                 thought="Cần OCR ảnh trước khi cập nhật hợp đồng.",
                 action="image.extract_text",
                 action_input='{"file_url":"https://storage.example.com/demo/cccd_mo.jpg"}',
@@ -421,6 +424,7 @@ async def seed_conversations(session) -> None:
             ),
         ]
     )
+
 
 
 async def seed_business_data(session) -> None:

@@ -8,7 +8,8 @@ from pydantic import BaseModel, Field
 from ek_client import ek_client
 from firewall.ai_firewall import check_message
 from firewall.file_processor import FILE_REJECT_MESSAGE, process_uploads
-from firewall.schemas import FirewallDecision, Intent, ProcessedFile, UserContext
+from firewall.schemas import ExecutionPlan, ExecutionStep, FirewallDecision, Intent, ProcessedFile, UserContext
+
 from llm.router import llm_router
 from llm.schemas import LlmGenerateRequest, LlmGenerateResponse, LlmMessage, TokenUsage
 from runtime.redis_gate import redis_concurrency_gate, set_runtime_state
@@ -279,18 +280,103 @@ async def _answer_task_execution(message: str, user: UserContext, files: list[Pr
     )
 
 
+
+async def create_execution_plan(
+    message: str,
+    user: UserContext,
+    firewall: FirewallDecision,
+    files: list[ProcessedFile],
+    intent: Intent,
+) -> ExecutionPlan:
+    file_info = ", ".join([f.original_file_name for f in files]) if files else "Khong co file"
+    prompt = f"""
+Ban la AI Planner cho VietMAS. Hay phan tich yeu cau nguoi dung va sinh ra Ke hoach thuc thi (Execution Plan) gom chuoi cac buoc (steps) can thuc hien.
+
+QUY TAC DAT plan_name:
+Trường "plan_name" PHẢI là một câu tiếng Việt cụ thể (5-8 từ) phản ánh CHÍNH XÁC mục tiêu câu hỏi người dùng.
+Ví dụ: "Kế hoạch tra cứu báo cáo doanh thu công ty", "Kế hoạch phân tích tệp dữ liệu đính kèm", "Kế hoạch tra cứu chính sách giao hàng RAG".
+KHÔNG sử dụng các tên chung chung như "Kế hoạch thực thi tác vụ" hay "Kế hoạch xử lý yêu cầu".
+
+Chi tra ve JSON hop le theo cau truc:
+{{
+  "plan_name": "Kế hoạch tra cứu chính sách bán hàng RAG",
+  "total_steps": 2,
+  "steps": [
+    {{
+      "step_number": 1,
+      "step_name": "Tra cứu trí thức RAG",
+      "action": "rag_search",
+      "thought": "Tìm kiếm chính sách bán hàng liên quan trong RAG"
+    }},
+    {{
+      "step_number": 2,
+      "step_name": "Tổng hợp câu trả lời",
+      "action": "llm_synthesize",
+      "thought": "Tổng hợp thông tin RAG để trả lời người dùng"
+    }}
+  ]
+}}
+
+Cac loai action hop le:
+- rag_search: truy van tri thuc RAG
+- sql_query: truy van du lieu CSDL nghiep vu
+- mcp_tool: thao tac file hoac tool
+- llm_synthesize: tong hop ket qua tu cac buoc va sinh phan hoi
+
+Yeu cau nguoi dung: {message}
+Y dinh khoi tao: {intent}
+Tep dinh kem: {file_info}
+Vai tro nguoi dung: {user.role}
+"""
+
+    try:
+        response = await llm_router.generate(
+            LlmGenerateRequest(
+                phase="default",
+                max_output_tokens=384,
+                temperature=0,
+                messages=[LlmMessage(role="user", content=prompt)],
+                metadata={"planner": "execution_plan", "user_id": user.user_id},
+            )
+        )
+        parsed = _json_object(response.content)
+        return ExecutionPlan.model_validate(parsed)
+    except Exception:
+        step_action = "llm_synthesize"
+        if intent == "rag_query":
+            step_action = "rag_search"
+        elif intent == "business_query":
+            step_action = "sql_query"
+        elif intent == "task_execution":
+            step_action = "mcp_tool"
+        return ExecutionPlan(
+            plan_name=f"Kế hoạch thực thi {intent}",
+            total_steps=1,
+            steps=[
+                ExecutionStep(
+                    step_number=1,
+                    step_name=f"Xử lý {intent}",
+                    action=step_action,
+                    thought=f"Thực thi tác vụ theo ý định {intent}",
+                )
+            ],
+        )
+
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     message: str = Form(...),
     conversation_id: Optional[str] = Form(default=None),
-    files: list[UploadFile | str] = File(default=[]),
+    files: list[UploadFile] = File(default=[]),
     x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
     x_user_email: Optional[str] = Header(default=None, alias="X-User-Email"),
     x_user_role: Optional[str] = Header(default=None, alias="X-User-Role"),
 ):
     user = _user_from_headers(x_user_id, x_user_email, x_user_role)
     conversation_id = _normalize_conversation_id(conversation_id)
-    upload_files = [file for file in files if isinstance(file, UploadFile)]
+    upload_files = files
+
     async with redis_concurrency_gate():
         await set_runtime_state(f"chat:{user.user_id}:last_status", "running")
 
@@ -302,13 +388,17 @@ async def chat(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE) from exc
 
         firewall = await check_message(message, user)
-        if processed_files and not firewall.allowed:
+        is_firewall_allowed = firewall.is_valid and firewall.allowed
+        if processed_files and not is_firewall_allowed:
             issues = set(firewall.detected_issues)
             if issues and issues.issubset(FILE_CONTEXT_SOFT_ISSUES):
+                firewall.is_valid = True
                 firewall.allowed = True
                 firewall.risk_level = "low"
                 firewall.reason = "File đã qua kiểm duyệt hardcode/AI trước bước xử lý yêu cầu."
-        if not firewall.allowed:
+                is_firewall_allowed = True
+
+        if not is_firewall_allowed:
             if not conversation_id:
                 conversation_id = await ek_client.create_conversation(user_id=user.user_id, title=_title_from_message(message))
             user_message = await ek_client.create_message(
@@ -328,7 +418,7 @@ async def chat(
                 user_message_id=user_message["id"],
                 assistant_message_id=assistant_message["id"],
                 intent=firewall.recommended_intent,
-                firewall=ChatFirewallRead(**firewall.model_dump(exclude={"raw", "recommended_intent"})),
+                firewall=ChatFirewallRead(**firewall.model_dump(exclude={"raw", "recommended_intent", "details", "is_valid"})),
                 status="rejected",
                 answer=REQUEST_REJECT_MESSAGE,
                 usage=ChatUsageRead(),
@@ -362,6 +452,32 @@ async def chat(
             input_tokens=llm_response.usage.input_tokens,
             output_tokens=llm_response.usage.output_tokens,
         )
+
+        # 2. Sinh Execution Plan đa bước và lưu vào agent_plans / agent_steps CSDL Enterprise Knowledge
+        plan = await create_execution_plan(message, user, firewall, processed_files, intent)
+        step_payloads = [
+            {
+                "step_number": step.step_number,
+                "step_name": step.step_name,
+                "action": step.action,
+                "thought": step.thought,
+                "status": "completed",
+            }
+            for step in plan.steps
+        ]
+        try:
+            await ek_client.create_agent_plan(
+                message_id=assistant_message["id"],
+                plan_name=plan.plan_name,
+                raw_plan=plan.model_dump(),
+                steps=step_payloads,
+                total_steps=plan.total_steps,
+                status="success",
+            )
+        except Exception:
+            pass
+
+
         await set_runtime_state(f"chat:{user.user_id}:last_status", "completed")
 
         return ChatResponse(
@@ -369,7 +485,7 @@ async def chat(
             user_message_id=user_message["id"],
             assistant_message_id=assistant_message["id"],
             intent=intent,
-            firewall=ChatFirewallRead(**firewall.model_dump(exclude={"raw", "recommended_intent"})),
+            firewall=ChatFirewallRead(**firewall.model_dump(exclude={"raw", "recommended_intent", "details", "is_valid"})),
             status="completed",
             answer=llm_response.content,
             usage=ChatUsageRead(**llm_response.usage.model_dump()),

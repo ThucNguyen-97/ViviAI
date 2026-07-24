@@ -2,6 +2,7 @@ import hashlib
 import re
 import shutil
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Sequence
 
@@ -9,24 +10,21 @@ from fastapi import HTTPException, UploadFile, status
 from openpyxl import load_workbook, Workbook
 
 from core.config import settings
-from ek_client import ek_client
-from firewall import ai_firewall
 from firewall.schemas import FirewallDecision, ProcessedFile, UserContext
 
 
 FILE_REJECT_MESSAGE = "Tệp tin bạn gửi không phù hợp với chính sách hệ thống"
 ALLOWED_EXTENSIONS = {".xlsx", ".png", ".md"}
-PROMPT_INJECTION_PATTERNS = [
-    r"ignore\s+(all\s+)?previous\s+instructions",
-    r"system\s+prompt",
-    r"developer\s+message",
-    r"jailbreak",
-    r"bypass",
-]
 
 
-def upload_root() -> Path:
-    root = Path(settings.UPLOAD_DIR)
+def upload_raw_dir() -> Path:
+    root = Path(settings.UPLOAD_DIR) / "raw"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def upload_clean_dir() -> Path:
+    root = Path(settings.UPLOAD_DIR) / "clean"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -46,16 +44,30 @@ def _safe_name(filename: str) -> str:
     return name
 
 
-def _flags_for_markdown(path: Path) -> list[str]:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    flags: list[str] = []
-    if re.search(r"<\s*script\b|<\s*iframe\b|javascript:", text, re.IGNORECASE):
-        flags.append("html_or_script")
-    if "file://" in text.lower():
-        flags.append("local_file_link")
-    if any(re.search(pattern, text, re.IGNORECASE) for pattern in PROMPT_INJECTION_PATTERNS):
-        flags.append("prompt_injection_phrase")
-    return flags
+def _check_signature(data: bytes, raw_path: Path, extension: str) -> None:
+    """Kiểm tra Signature Magic Bytes và cấu trúc tệp chuẩn bằng code Backend."""
+    if extension == ".png":
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+    elif extension == ".xlsx":
+        if not data.startswith(b"PK\x03\x04") or not zipfile.is_zipfile(raw_path):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+    elif extension == ".md":
+        try:
+            data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
+
+
+def sanitize_md_for_prompt(md_content: str) -> str:
+    """Xóa đường dẫn URL Markdown [text](url) -> text bằng Regex."""
+    return re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", md_content)
+
+
+def _sanitize_markdown(raw_path: Path, target_path: Path) -> None:
+    text = raw_path.read_text(encoding="utf-8", errors="replace")
+    clean_text = sanitize_md_for_prompt(text)
+    target_path.write_text(clean_text, encoding="utf-8")
 
 
 def _sanitize_xlsx(raw_path: Path, target_path: Path) -> None:
@@ -79,26 +91,29 @@ def _sanitize_xlsx(raw_path: Path, target_path: Path) -> None:
     clean.save(target_path)
 
 
-async def _store_in_ek(
-    processed: ProcessedFile,
-    *,
-    user: UserContext,
-    decision: FirewallDecision,
-    metadata: dict,
-) -> ProcessedFile:
-    response = await ek_client.upload_clean_file(
-        path=Path(processed.clean_path),
-        original_file_name=processed.original_file_name,
-        uploaded_by=user.user_id,
-        file_type=processed.file_type,
-        mime_type=processed.mime_type,
-        raw_vm_path=processed.raw_path,
-        sanitized=processed.sanitized,
-        firewall_result=decision.model_dump(),
-        metadata=metadata,
-    )
-    processed.ek_file_id = response["id"]
-    return processed
+def _resize_and_strip_png(raw_path: Path, target_path: Path, max_dimension: int = 1024) -> bool:
+    """Xóa sạch Metadata EXIF cho ảnh PNG và resize nếu quá lớn để tiết kiệm token."""
+    try:
+        from PIL import Image
+        with Image.open(raw_path) as img:
+            img_format = img.format or "PNG"
+            img = img.convert("RGBA" if img.mode == "RGBA" else "RGB")
+            
+            w, h = img.size
+            if w > max_dimension or h > max_dimension:
+                if w > h:
+                    new_w = max_dimension
+                    new_h = int(h * (max_dimension / w))
+                else:
+                    new_h = max_dimension
+                    new_w = int(w * (max_dimension / h))
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+            img.save(target_path, format=img_format)
+            return True
+    except Exception:
+        shutil.copyfile(raw_path, target_path)
+        return False
 
 
 async def process_uploads(files: Sequence[UploadFile], user: UserContext) -> list[ProcessedFile]:
@@ -116,37 +131,28 @@ async def process_uploads(files: Sequence[UploadFile], user: UserContext) -> lis
         if len(data) > _max_size(extension):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
 
-        raw_path = upload_root() / f"{uuid.uuid4()}{extension}"
+        file_uuid = str(uuid.uuid4())
+        raw_path = upload_raw_dir() / f"{file_uuid}{extension}"
         raw_path.write_bytes(data)
 
-        clean_path = upload_root() / f"{uuid.uuid4()}{extension}"
-        flags: list[str] = []
-        decision = FirewallDecision(allowed=True, recommended_intent="task_execution")
-        sanitized = False
+        # 1. Check Signature Magic Bytes & ZIP Structure
+        _check_signature(data, raw_path, extension)
+
+        clean_path = upload_clean_dir() / f"{file_uuid}{extension}"
+        sanitized = True
 
         try:
             if extension == ".xlsx":
                 _sanitize_xlsx(raw_path, clean_path)
-                sanitized = True
             elif extension == ".md":
-                flags = _flags_for_markdown(raw_path)
-                decision = await ai_firewall.check_markdown_file(raw_path, user, flags)
-                if not decision.allowed:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
-                shutil.copyfile(raw_path, clean_path)
+                _sanitize_markdown(raw_path, clean_path)
             elif extension == ".png":
-                decision = await ai_firewall.check_png_file(raw_path, user)
-                if not decision.allowed:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
-                if data[:8] != b"\x89PNG\r\n\x1a\n":
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
-                shutil.copyfile(raw_path, clean_path)
+                sanitized = _resize_and_strip_png(raw_path, clean_path, max_dimension=1024)
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE) from exc
 
-        checksum = hashlib.sha256(clean_path.read_bytes()).hexdigest()
         processed = ProcessedFile(
             original_file_name=original_name,
             file_type=extension.lstrip("."),
@@ -154,14 +160,10 @@ async def process_uploads(files: Sequence[UploadFile], user: UserContext) -> lis
             clean_path=str(clean_path),
             mime_type=upload.content_type,
             sanitized=sanitized,
-            flags=flags,
-        )
-        processed = await _store_in_ek(
-            processed,
-            user=user,
-            decision=decision,
-            metadata={"flags": flags, "checksum_sha256": checksum, "content_type_seen": upload.content_type},
+            flags=[],
+            ek_file_id=file_uuid,
         )
         processed_files.append(processed)
 
     return processed_files
+

@@ -1,0 +1,156 @@
+Database Permission Matrix
+
+Database / Column                | Admin | CEO | Manager
+---------------------------------|-------|-----|----------
+users                            | RWD   | R   | RW(Self)
+├── id                           | RWD   | R   | R(Self)
+├── email                        | RWD   | R   | RW(Self)
+├── google_id                    | RWD   | No  | No
+├── full_name                    | RWD   | RW  | RW(Self)
+├── avatar_url                   | RWD   | RW  | RW(Self)
+├── role                         | RWD   | R   | No
+├── is_active                    | RWD   | RW  | No
+├── last_login_id                | RWD   | R   | R(Self)
+└── created_at                   | RWD   | R   | R(Self)
+
+rag_documents                    | RWD   | R   | R
+├── id                           | RWD   | R   | R
+├── file_name                    | RWD   | R   | R
+├── file_path                    | RWD   | R   | R
+├── file_size                    | RWD   | R   | R
+├── file_type                    | RWD   | R   | R
+├── storage_url                  | RWD   | R   | R
+├── created_at                   | RWD   | R   | R
+└── file_modified_at             | RWD   | R   | R
+
+chunks                           | RWD   | No  | No
+├── id                           | RWD   | No  | No
+├── rag_document_id              | RWD   | No  | No
+├── content                      | RWD   | No  | No
+├── embedding                    | RWD   | No  | No
+├── chunk_index                  | RWD   | No  | No
+└── meta_info                    | RWD   | No  | No
+
+documents                        | RWD   | RW  | RW(Self)
+├── id                           | RWD   | R   | R(Self)
+├── file_name                    | RWD   | RW  | RW(Self)
+├── file_path                    | RWD   | R   | R(Self)
+├── file_size                    | RWD   | R   | R(Self)
+├── file_type                    | RWD   | R   | R(Self)
+├── source_url                   | RWD   | R   | R(Self)
+├── required_role                | RWD   | RW  | No
+├── created_at                   | RWD   | R   | R(Self)
+├── updated_at                   | RWD   | R   | R(Self)
+├── created_by                   | RWD   | R   | R(Self)
+└── meta_info                    | RWD   | RW  | RW(Self)
+
+vouchers                         | RWD   | RW  | RW(Self)
+├── id                           | RWD   | R   | R(Self)
+├── file_name                    | RWD   | RW  | RW(Self)
+├── file_path                    | RWD   | RW  | RW(Self)
+├── file_size                    | RWD   | R   | R(Self)
+├── file_type                    | RWD   | R   | R(Self)
+├── storage_url                  | RWD   | R   | R(Self)
+├── created_at                   | RWD   | R   | R(Self)
+└── created_by                   | RWD   | R   | R(Self)
+
+general_journal                  | RWD   | RW  | RW(Self)
+├── id                           | RWD   | R   | R(Self)
+├── vouchers_id                  | RWD   | R   | R(Self)
+├── storage_url                  | RWD   | R   | R(Self)
+├── date                         | RWD   | R   | RW(Self)
+├── description                  | RWD   | RW  | RW(Self)
+├── status                       | RWD   | RW  | RW(Self)
+├── approved_at                  | RWD   | RW  | No
+└── created_at                   | RWD   | R   | R(Self)
+
+general_journal_lines            | RWD   | R   | R(Self)
+├── id                           | RWD   | R   | R(Self)
+├── general_journal_id           | RWD   | R   | R(Self)
+├── account_code                 | RWD   | R   | R(Self)
+├── account_name                 | RWD   | R   | R(Self)
+├── debit                        | RWD   | R   | R(Self)
+└── credit                       | RWD   | R   | R(Self)
+
+inventory                        | RWD   | RW  | RW(Self)
+├── id                           | RWD   | R   | R(Self)
+├── name                         | RWD   | RW  | RW(Self)
+├── quantity                     | RWD   | RW  | RW(Self)
+├── unit                         | RWD   | RW  | RW(Self)
+├── purchase_price               | RWD   | R   | R(Self)
+├── price                        | RWD   | RW  | RW(Self)
+├── description                  | RWD   | RW  | RW(Self)
+└── created_at                   | RWD   | R   | R(Self)
+
+partners                         | RWD   | RW  | RW(Self)
+├── id                           | RWD   | R   | R(Self)
+├── name                         | RWD   | RW  | RW(Self)
+├── partner_type                 | RWD   | RW  | RW(Self)
+├── phone                        | RWD   | RW  | RW(Self)
+├── email                        | RWD   | RW  | RW(Self)
+├── address                      | RWD   | RW  | RW(Self)
+└── created_at                   | RWD   | R   | R(Self)
+
+conversations                    | RWD   | R   | RW(Self)
+├── id                           | RWD   | R   | R(Self)
+├── user_id                      | RWD   | R   | R(Self)
+├── title                        | RWD   | R   | RW(Self)
+├── summary                      | RWD   | R   | RW(Self)
+├── input_tokens                 | RWD   | R   | R(Self)
+├── output_tokens                | RWD   | R   | R(Self)
+├── total_tokens                 | RWD   | R   | R(Self)
+├── input_token_cost             | RWD   | R   | R(Self)
+├── output_token_cost            | RWD   | R   | R(Self)
+├── total_cost                   | RWD   | R   | R(Self)
+├── created_at                   | RWD   | R   | R(Self)
+└── updated_at                   | RWD   | R   | RW(Self)
+
+messages                         | RWD   | R   | RW(Self)
+├── id                           | RWD   | R   | R(Self)
+├── conversation_id              | RWD   | R   | R(Self)
+├── role                         | RWD   | R   | R(Self)
+├── content                      | RWD   | R   | RW(Self)
+├── status                       | RWD   | R   | RW(Self)
+├── input_tokens                 | RWD   | R   | R(Self)
+├── output_tokens                | RWD   | R   | R(Self)
+├── total_tokens                 | RWD   | R   | R(Self)
+├── documents_source_url         | RWD   | R   | R(Self)
+├── vouchers_source_url          | RWD   | R   | R(Self)
+└── created_at                   | RWD   | R   | R(Self)
+
+agent_plans                      | RWD   | R   | R(Self)
+├── id                           | RWD   | R   | R(Self)
+├── message_id                   | RWD   | R   | R(Self)
+├── raw_plan                     | RWD   | R   | R(Self)
+├── mcp_tools                    | RWD   | R   | R(Self)
+├── total_steps                  | RWD   | R   | R(Self)
+├── status                       | RWD   | R   | RW(Self)
+├── input_tokens                 | RWD   | R   | R(Self)
+├── output_tokens                | RWD   | R   | R(Self)
+├── total_tokens                 | RWD   | R   | R(Self)
+└── created_at                   | RWD   | R   | R(Self)
+
+agent_tasks                      | RWD   | R   | R(Self)
+├── id                           | RWD   | R   | R(Self)
+├── agent_plans_id               | RWD   | R   | R(Self)
+├── step_number                  | RWD   | R   | R(Self)
+├── label                        | RWD   | R   | RW(Self)
+├── thought                      | RWD   | R   | RW(Self)
+├── action                       | RWD   | R   | RW(Self)
+├── action_input                 | RWD   | R   | RW(Self)
+├── action_output                | RWD   | R   | RW(Self)
+├── status                       | RWD   | R   | RW(Self)
+├── input_tokens                 | RWD   | R   | R(Self)
+├── output_tokens                | RWD   | R   | R(Self)
+├── total_tokens                 | RWD   | R   | R(Self)
+├── error_message                | RWD   | R   | R(Self)
+├── started_at                   | RWD   | R   | R(Self)
+└── ended_at                     | RWD   | R   | R(Self)
+
+Ký hiệu
+
+R        = Read
+W        = Write
+D        = Delete
+No       = Không có quyền
+(Self)   = Chỉ thao tác trên dữ liệu của chính mình

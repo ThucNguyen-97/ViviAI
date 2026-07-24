@@ -51,15 +51,15 @@ class AdminOverviewResponse(AdminApiModel):
     failed_messages: int
     total_agent_plans: int
     failed_agent_plans: int
-    total_agent_tasks: int
-    failed_agent_tasks: int
+    total_agent_steps: int
+    failed_agent_steps: int
     rag_documents: int
     rag_chunks: int
     user_files: int
     vouchers: int
     usage: UsageStats
     message_statuses: list[StatusCount] = Field(default_factory=list)
-    agent_task_statuses: list[StatusCount] = Field(default_factory=list)
+    agent_step_statuses: list[StatusCount] = Field(default_factory=list)
 
 
 class AdminUserListResponse(AdminApiModel):
@@ -91,10 +91,10 @@ class ConversationLogListResponse(AdminApiModel):
     conversations: list[ConversationLogItem]
 
 
-class AgentTaskRead(AdminApiModel):
+class AgentStepRead(AdminApiModel):
     id: str
     step_number: int
-    label: str
+    step_name: str
     thought: str
     action: Optional[str] = None
     action_input: Optional[str] = None
@@ -110,6 +110,7 @@ class AgentTaskRead(AdminApiModel):
 
 class AgentPlanRead(AdminApiModel):
     id: str
+    plan_name: Optional[str] = None
     raw_plan: dict[str, Any]
     mcp_tools: Optional[list[dict[str, Any]]] = None
     total_steps: int
@@ -118,7 +119,8 @@ class AgentPlanRead(AdminApiModel):
     output_tokens: int
     total_tokens: int
     created_at: datetime
-    tasks: list[AgentTaskRead] = Field(default_factory=list)
+    steps: list[AgentStepRead] = Field(default_factory=list)
+
 
 
 class MessageLogRead(AdminApiModel):

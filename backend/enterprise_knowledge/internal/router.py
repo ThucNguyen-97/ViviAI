@@ -238,6 +238,41 @@ async def internal_create_clean_file(
     }
 
 
+@router.get("/clean-files")
+async def internal_list_clean_files(
+    limit: int = Depends(pagination_limit),
+    offset: int = Depends(pagination_offset),
+    db: AsyncSession = Depends(get_db),
+):
+    """Liệt kê tất cả các tệp sạch đã qua kiểm duyệt và lưu trữ trên EK."""
+    from sqlalchemy import select
+    result = await db.execute(
+        select(CleanFile)
+        .order_by(CleanFile.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    files = result.scalars().all()
+    return {
+        "total": len(files),
+        "clean_files": [
+            {
+                "id": str(f.id),
+                "original_file_name": f.original_file_name,
+                "clean_file_name": f.clean_file_name,
+                "file_path": f.file_path,
+                "file_size": f.file_size,
+                "file_type": f.file_type,
+                "sanitized": f.sanitized,
+                "uploaded_by": f.uploaded_by,
+                "created_at": f.created_at.isoformat() if f.created_at else None,
+            }
+            for f in files
+        ],
+    }
+
+
+
 @router.post("/rag/search", response_model=RagSearchResponse)
 async def internal_rag_search(
     request: RagSearchRequest,
@@ -354,3 +389,112 @@ async def internal_account_balances(
         date_to=date_to,
         status=status,
     )
+
+
+class AgentStepCreate(BaseModel):
+    step_number: int
+    step_name: str
+    action: Optional[str] = None
+    thought: str
+    action_input: Optional[str] = None
+    action_output: Optional[str] = None
+    status: str = "completed"
+
+
+class AgentPlanCreate(BaseModel):
+    message_id: UUID
+    plan_name: Optional[str] = "Kế hoạch thực thi tác vụ"
+    raw_plan: dict[str, Any]
+    mcp_tools: Optional[list] = None
+    total_steps: int = 0
+    status: str = "success"
+    steps: list[AgentStepCreate] = Field(default_factory=list)
+
+
+@router.post("/agent-plans")
+async def internal_create_agent_plan(
+    request: AgentPlanCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    from db.models import AgentPlan, AgentStep
+
+    message = await db.get(Message, request.message_id)
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found.")
+
+    plan = AgentPlan(
+        message_id=request.message_id,
+        plan_name=request.plan_name,
+        raw_plan=request.raw_plan,
+        mcp_tools=request.mcp_tools or [],
+        total_steps=request.total_steps or len(request.steps),
+        status=request.status,
+    )
+    db.add(plan)
+    await db.commit()
+    await db.refresh(plan)
+
+    for step_data in request.steps:
+        step = AgentStep(
+            agent_plan_id=plan.id,
+            step_number=step_data.step_number,
+            step_name=step_data.step_name,
+            action=step_data.action,
+            thought=step_data.thought,
+            action_input=step_data.action_input,
+            action_output=step_data.action_output,
+            status=step_data.status,
+        )
+        db.add(step)
+
+    await db.commit()
+    return {"id": str(plan.id), "plan_name": plan.plan_name, "total_steps": plan.total_steps, "status": plan.status}
+
+
+@router.get("/agent-plans")
+async def internal_list_agent_plans(
+    limit: int = Depends(pagination_limit),
+    offset: int = Depends(pagination_offset),
+    db: AsyncSession = Depends(get_db),
+):
+    """Liệt kê tất cả kế hoạch thực thi AgentPlan và AgentStep chi tiết."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from db.models import AgentPlan
+
+    result = await db.execute(
+        select(AgentPlan)
+        .options(selectinload(AgentPlan.steps))
+        .order_by(AgentPlan.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    plans = result.scalars().all()
+    return {
+        "total": len(plans),
+        "plans": [
+            {
+                "id": str(p.id),
+                "message_id": str(p.message_id),
+                "plan_name": p.plan_name,
+                "total_steps": p.total_steps,
+                "status": p.status,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "steps": [
+                    {
+                        "id": str(s.id),
+                        "step_number": s.step_number,
+                        "step_name": s.step_name,
+                        "action": s.action,
+                        "thought": s.thought,
+                        "status": s.status,
+                    }
+                    for s in p.steps
+                ],
+            }
+            for p in plans
+        ],
+    }
+
+
+

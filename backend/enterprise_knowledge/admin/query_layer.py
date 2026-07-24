@@ -12,7 +12,7 @@ from admin.schemas import (
     AdminUserListResponse,
     AdminUserRead,
     AgentPlanRead,
-    AgentTaskRead,
+    AgentStepRead,
     ConversationLogDetailResponse,
     ConversationLogItem,
     ConversationLogListResponse,
@@ -27,7 +27,7 @@ from admin.schemas import (
 from core.config import settings
 from db.models import (
     AgentPlan,
-    AgentTask,
+    AgentStep,
     Chunk,
     Conversation,
     Document,
@@ -37,6 +37,7 @@ from db.models import (
     User,
     Voucher,
 )
+
 
 
 LLM_ROUTING_ROLES = {
@@ -155,9 +156,9 @@ async def get_overview(db: AsyncSession) -> AdminOverviewResponse:
     failed_agent_plans = await db.scalar(
         select(func.count(AgentPlan.id)).where(AgentPlan.status == "failed")
     )
-    total_agent_tasks = await db.scalar(select(func.count(AgentTask.id)))
-    failed_agent_tasks = await db.scalar(
-        select(func.count(AgentTask.id)).where(AgentTask.status == "failed")
+    total_agent_steps = await db.scalar(select(func.count(AgentStep.id)))
+    failed_agent_steps = await db.scalar(
+        select(func.count(AgentStep.id)).where(AgentStep.status == "failed")
     )
     rag_documents = await db.scalar(select(func.count(RagDocument.id)))
     rag_chunks = await db.scalar(select(func.count(Chunk.id)))
@@ -171,11 +172,11 @@ async def get_overview(db: AsyncSession) -> AdminOverviewResponse:
             .order_by(func.count(Message.id).desc())
         )
     ).all()
-    task_status_rows = (
+    step_status_rows = (
         await db.execute(
-            select(AgentTask.status, func.count(AgentTask.id))
-            .group_by(AgentTask.status)
-            .order_by(func.count(AgentTask.id).desc())
+            select(AgentStep.status, func.count(AgentStep.id))
+            .group_by(AgentStep.status)
+            .order_by(func.count(AgentStep.id).desc())
         )
     ).all()
 
@@ -187,8 +188,8 @@ async def get_overview(db: AsyncSession) -> AdminOverviewResponse:
         failed_messages=failed_messages or 0,
         total_agent_plans=total_agent_plans or 0,
         failed_agent_plans=failed_agent_plans or 0,
-        total_agent_tasks=total_agent_tasks or 0,
-        failed_agent_tasks=failed_agent_tasks or 0,
+        total_agent_steps=total_agent_steps or 0,
+        failed_agent_steps=failed_agent_steps or 0,
         rag_documents=rag_documents or 0,
         rag_chunks=rag_chunks or 0,
         user_files=user_files or 0,
@@ -205,11 +206,12 @@ async def get_overview(db: AsyncSession) -> AdminOverviewResponse:
             StatusCount(status=_status_label(row[0]), total=row[1] or 0)
             for row in message_status_rows
         ],
-        agent_task_statuses=[
+        agent_step_statuses=[
             StatusCount(status=_status_label(row[0]), total=row[1] or 0)
-            for row in task_status_rows
+            for row in step_status_rows
         ],
     )
+
 
 
 async def list_users(
@@ -343,7 +345,7 @@ async def get_conversation_detail(
         .options(
             selectinload(Conversation.messages)
             .selectinload(Message.agent_plans)
-            .selectinload(AgentPlan.tasks)
+            .selectinload(AgentPlan.steps)
         )
         .where(Conversation.id == conversation_id)
     )
@@ -386,6 +388,7 @@ async def get_conversation_detail(
                 agent_plans=[
                     AgentPlanRead(
                         id=str(plan.id),
+                        plan_name=plan.plan_name,
                         raw_plan=plan.raw_plan,
                         mcp_tools=plan.mcp_tools,
                         total_steps=plan.total_steps,
@@ -394,24 +397,24 @@ async def get_conversation_detail(
                         output_tokens=plan.output_tokens or 0,
                         total_tokens=plan.total_tokens or 0,
                         created_at=plan.created_at,
-                        tasks=[
-                            AgentTaskRead(
-                                id=str(task.id),
-                                step_number=task.step_number,
-                                label=task.label,
-                                thought=task.thought,
-                                action=task.action,
-                                action_input=task.action_input,
-                                action_output=task.action_output,
-                                status=task.status,
-                                input_tokens=task.input_tokens or 0,
-                                output_tokens=task.output_tokens or 0,
-                                total_tokens=task.total_tokens or 0,
-                                error_message=task.error_message,
-                                started_at=task.started_at,
-                                ended_at=task.ended_at,
+                        steps=[
+                            AgentStepRead(
+                                id=str(step.id),
+                                step_number=step.step_number,
+                                step_name=step.step_name,
+                                thought=step.thought,
+                                action=step.action,
+                                action_input=step.action_input,
+                                action_output=step.action_output,
+                                status=step.status,
+                                input_tokens=step.input_tokens or 0,
+                                output_tokens=step.output_tokens or 0,
+                                total_tokens=step.total_tokens or 0,
+                                error_message=step.error_message,
+                                started_at=step.started_at,
+                                ended_at=step.ended_at,
                             )
-                            for task in sorted(plan.tasks, key=lambda task: task.step_number)
+                            for step in sorted(plan.steps, key=lambda step: step.step_number)
                         ],
                     )
                     for plan in sorted(message.agent_plans, key=lambda plan: plan.created_at)
@@ -420,6 +423,7 @@ async def get_conversation_detail(
             for message in messages
         ],
     )
+
 
 
 async def get_rag_stats(db: AsyncSession) -> RagStatsResponse:
