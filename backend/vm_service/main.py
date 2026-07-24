@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import APIKeyHeader
 
 from llm.adapters import LlmProviderError
 from llm.router import llm_router
@@ -7,7 +8,20 @@ from llm.schemas import LlmGenerateRequest, LlmGenerateResponse, RouterStatusRes
 from orchestrator.chat import router as chat_router
 from runtime.egress_guard import ContentSecurityPolicyMiddleware
 
-app = FastAPI(title="VietMAS VM Service", version="0.3.0")
+# Security schemes cho Swagger UI — hiển thị nút Authorize với 3 user-identity headers
+_user_id_header = APIKeyHeader(name="X-User-Id", auto_error=False, description="ID người dùng (bắt buộc)")
+_user_email_header = APIKeyHeader(name="X-User-Email", auto_error=False, description="Email người dùng")
+_user_role_header = APIKeyHeader(name="X-User-Role", auto_error=False, description="Role: admin | ceo | manager")
+
+app = FastAPI(
+    title="VietMAS VM Service",
+    version="0.3.0",
+    dependencies=[
+        Depends(_user_id_header),
+        Depends(_user_email_header),
+        Depends(_user_role_header),
+    ],
+)
 
 # CSP & Security Headers Middleware (phải đăng ký trước CORS)
 app.add_middleware(ContentSecurityPolicyMiddleware)
@@ -22,6 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(chat_router)
+
 
 
 
