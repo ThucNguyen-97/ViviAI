@@ -11,6 +11,7 @@ from llm.schemas import LlmGenerateRequest, LlmMessage
 
 
 FALLBACK_DENY_ISSUES = {"prompt_injection", "privilege_escalation", "unsafe_file"}
+PERMISSION_MATRIX_PATH = Path(__file__).resolve().parents[1] / "knowledge" / ".permission_matrix.txt"
 
 
 def _json_object(text: str) -> dict:
@@ -26,12 +27,24 @@ def _json_object(text: str) -> dict:
     return json.loads(cleaned)
 
 
-PERMISSION_MATRIX = """
+_DEFAULT_PERMISSION_MATRIX = """
 Permission Matrix (Bang tra cuu quyen truy cap):
 - admin: Toan quyen quan tri, xem va truy van tat ca du lieu he thong, log, CSDL, tai lieu RAG.
 - ceo: Xem du lieu tong quan doanh nghiep, doanh thu, ton kho, RAG. KHONG duoc xem thông tin/email riêng cua CEO khac hoac du lieu nhay cam bi cam.
 - manager: Chi duoc truy van va xem du lieu nghiep vu gan voi chinh user_id cua minh. KHONG duoc truy van danh sach doanh thu/ton kho/but toan rong cua toan cong ty.
 """
+
+
+def _load_permission_matrix() -> str:
+    try:
+        return PERMISSION_MATRIX_PATH.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError(
+            f"Permission Matrix file is unavailable: {PERMISSION_MATRIX_PATH}"
+        ) from exc
+
+
+PERMISSION_MATRIX = _load_permission_matrix()
 
 
 def _decision_from_text(text: str) -> FirewallDecision:
@@ -119,4 +132,3 @@ Yeu cau nguoi dung:
         )
     )
     return _decision_from_text(response.content)
-
