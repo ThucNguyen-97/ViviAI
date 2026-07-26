@@ -18,6 +18,7 @@ class LlmGenerateRequest(BaseModel):
     phase: LlmPhase = "default"
     messages: list[LlmMessage] = Field(min_length=1)
     system: Optional[str] = None
+    images: list[dict[str, Any]] = Field(default_factory=list)
     max_output_tokens: Optional[int] = Field(default=None, ge=1, le=8192)
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     conversation_id: Optional[str] = None

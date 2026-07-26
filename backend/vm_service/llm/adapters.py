@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import time
 from dataclasses import dataclass
 
@@ -63,12 +64,33 @@ def _usage_from_anthropic(message) -> TokenUsage:
     )
 
 
-def _anthropic_messages(messages: list[LlmMessage]) -> list[dict[str, str]]:
-    result: list[dict[str, str]] = []
+def _anthropic_messages(messages: list[LlmMessage], images: list[dict] = None) -> list[dict]:
+    result: list[dict] = []
+    user_msgs = [m for m in messages if m.role == "user"]
+    last_user_msg = user_msgs[-1] if user_msgs else None
+
     for message in messages:
         if message.role == "system":
             continue
-        result.append({"role": message.role, "content": message.content})
+        if message is last_user_msg and images:
+            content_blocks: list[dict] = []
+            for img in images:
+                raw_data = img.get("data")
+                mime_type = img.get("mime_type", "image/png")
+                if raw_data:
+                    b64_str = base64.b64encode(raw_data).decode("utf-8")
+                    content_blocks.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": mime_type,
+                            "data": b64_str,
+                        },
+                    })
+            content_blocks.append({"type": "text", "text": message.content})
+            result.append({"role": message.role, "content": content_blocks})
+        else:
+            result.append({"role": message.role, "content": message.content})
     return result
 
 
@@ -105,10 +127,20 @@ class GoogleAdapter:
                 temperature=request.temperature,
                 system_instruction=request.system,
             )
+
+            contents: list = []
+            if request.images:
+                for img in request.images:
+                    raw_data = img.get("data")
+                    mime_type = img.get("mime_type", "image/png")
+                    if raw_data:
+                        contents.append(types.Part.from_bytes(data=raw_data, mime_type=mime_type))
+            contents.append(_combined_text(request.messages))
+
             response = await asyncio.wait_for(
                 client.models.generate_content(
                     model=self.model,
-                    contents=_combined_text(request.messages),
+                    contents=contents,
                     config=config,
                 ),
                 timeout=timeout_seconds,
@@ -166,7 +198,7 @@ class AnthropicAdapter:
             params = {
                 "model": self.model,
                 "max_tokens": request.max_output_tokens or 2048,
-                "messages": _anthropic_messages(request.messages),
+                "messages": _anthropic_messages(request.messages, request.images),
             }
             if system:
                 params["system"] = system

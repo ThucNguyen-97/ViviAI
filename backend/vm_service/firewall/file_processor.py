@@ -2,19 +2,17 @@ import hashlib
 import re
 import shutil
 import uuid
-import zipfile
 from pathlib import Path
 from typing import Sequence
 
 from fastapi import HTTPException, UploadFile, status
-from openpyxl import load_workbook, Workbook
 
 from core.config import settings
 from firewall.schemas import FirewallDecision, ProcessedFile, UserContext
 
 
 FILE_REJECT_MESSAGE = "Tệp tin bạn gửi không phù hợp với chính sách hệ thống"
-ALLOWED_EXTENSIONS = {".xlsx", ".png", ".md"}
+ALLOWED_EXTENSIONS = {".png", ".md"}
 
 
 def upload_raw_dir() -> Path:
@@ -33,7 +31,6 @@ def _max_size(extension: str) -> int:
     return {
         ".md": settings.MAX_MD_BYTES,
         ".png": settings.MAX_PNG_BYTES,
-        ".xlsx": settings.MAX_XLSX_BYTES,
     }[extension]
 
 
@@ -49,7 +46,6 @@ def _check_signature(data: bytes, raw_path: Path, extension: str) -> None:
 
     Defense-in-depth chống giả danh đuôi file:
     - .png: kiểm tra magic bytes PNG chính xác 8 byte đầu
-    - .xlsx: kiểm tra ZIP structure + nội bộ phải có entry OOXML hợp lệ
     - .md : kiểm tra UTF-8 + không phải binary file giả danh text
     """
     # Danh sách magic bytes của các file binary phổ biến (dùng để loại trừ cho .md)
@@ -71,19 +67,6 @@ def _check_signature(data: bytes, raw_path: Path, extension: str) -> None:
 
     if extension == ".png":
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
-
-    elif extension == ".xlsx":
-        # Lớp 1: magic bytes ZIP
-        if not data.startswith(b"PK\x03\x04") or not zipfile.is_zipfile(raw_path):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
-        # Lớp 2: ZIP phải chứa cấu trúc OOXML hợp lệ — ZIP thường không có entry này
-        try:
-            with zipfile.ZipFile(raw_path, "r") as zf:
-                names = zf.namelist()
-                if "xl/workbook.xml" not in names and "[Content_Types].xml" not in names:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
-        except zipfile.BadZipFile:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
 
     elif extension == ".md":
@@ -108,34 +91,6 @@ def _sanitize_markdown(raw_path: Path, target_path: Path) -> None:
     text = raw_path.read_text(encoding="utf-8", errors="replace")
     clean_text = sanitize_md_for_prompt(text)
     target_path.write_text(clean_text, encoding="utf-8")
-
-
-def _sanitize_xlsx(raw_path: Path, target_path: Path) -> None:
-    workbook = load_workbook(
-        raw_path,
-        read_only=False,
-        keep_vba=False,
-        data_only=True,
-        keep_links=False,
-    )
-    clean = Workbook()
-    default = clean.active
-    clean.remove(default)
-
-    for source in workbook.worksheets:
-        target = clean.create_sheet(title=source.title[:31] or "Sheet")
-        for row in source.iter_rows():
-            for cell in row:
-                target[cell.coordinate].value = cell.value
-
-    # Xóa toàn bộ metadata: openpyxl tự thêm creator mặc định → phải clear thủ công
-    clean.properties.creator = ""
-    clean.properties.lastModifiedBy = ""
-    clean.properties.description = ""
-    clean.properties.subject = ""
-    clean.properties.title = ""
-    clean.properties.keywords = ""
-    clean.save(target_path)
 
 
 
@@ -183,16 +138,14 @@ async def process_uploads(files: Sequence[UploadFile], user: UserContext) -> lis
         raw_path = upload_raw_dir() / f"{file_uuid}{extension}"
         raw_path.write_bytes(data)
 
-        # 1. Check Signature Magic Bytes & ZIP Structure
+        # 1. Check Signature Magic Bytes
         _check_signature(data, raw_path, extension)
 
         clean_path = upload_clean_dir() / f"{file_uuid}{extension}"
         sanitized = True
 
         try:
-            if extension == ".xlsx":
-                _sanitize_xlsx(raw_path, clean_path)
-            elif extension == ".md":
+            if extension == ".md":
                 _sanitize_markdown(raw_path, clean_path)
             elif extension == ".png":
                 sanitized = _resize_and_strip_png(raw_path, clean_path, max_dimension=1024)

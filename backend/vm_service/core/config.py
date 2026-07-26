@@ -31,7 +31,6 @@ class Settings(BaseSettings):
     MAX_FILES_PER_REQUEST: int = 2
     MAX_MD_BYTES: int = 2 * 1024 * 1024
     MAX_PNG_BYTES: int = 10 * 1024 * 1024
-    MAX_XLSX_BYTES: int = 20 * 1024 * 1024
 
     # USD per 1M tokens for the configured Phase 2 models.
     GOOGLE_INPUT_USD_PER_MTOK: float = 0.25

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
@@ -253,31 +254,50 @@ Question:
 
 
 async def _answer_task_execution(message: str, user: UserContext, files: list[ProcessedFile]) -> LlmGenerateResponse:
-    file_summary = [
-        {"ek_file_id": file.ek_file_id, "file_name": file.original_file_name, "file_type": file.file_type, "sanitized": file.sanitized}
-        for file in files
-    ]
-    file_text = ""
-    if file_summary:
-        file_text = "\n".join(
-            f"- {item['file_name']} ({item['file_type']}), id={item['ek_file_id']}, sanitized={item['sanitized']}"
-            for item in file_summary
-        )
-    else:
-        file_text = "- Khong co file dinh kem."
-    content = (
-        "Đã nhận yêu cầu task_execution và đã hoàn tất bước kiểm duyệt an toàn ban đầu.\n"
-        "Ở Giai đoạn 3, hệ thống mới lưu trạng thái, kiểm duyệt và chuẩn bị dữ liệu; "
-        "việc thực thi MCP/tool thật sẽ được xử lý ở Giai đoạn 4.\n\n"
-        f"File đã xử lý:\n{file_text}"
+    images_payload: list[dict] = []
+    md_contexts: list[str] = []
+
+    for file in files:
+        clean_p = Path(file.clean_path)
+        if not clean_p.exists():
+            continue
+
+        if file.file_type == "md":
+            try:
+                md_text = clean_p.read_text(encoding="utf-8", errors="replace")
+                md_contexts.append(f"--- [Nội dung tệp Markdown: {file.original_file_name}] ---\n{md_text}\n--- [Kết thúc tệp] ---")
+            except Exception:
+                pass
+        elif file.file_type == "png":
+            try:
+                raw_bytes = clean_p.read_bytes()
+                images_payload.append({
+                    "data": raw_bytes,
+                    "mime_type": file.mime_type or "image/png",
+                })
+            except Exception:
+                pass
+
+    prompt_parts = []
+    if md_contexts:
+        prompt_parts.append("\n\n".join(md_contexts))
+
+    prompt_parts.append(
+        f"Yêu cầu của người dùng ({user.role}): {message}\n\n"
+        "Hãy phân tích kỹ nội dung tệp tin đính kèm (hình ảnh/văn bản/markdown) và trả lời trực tiếp, đầy đủ, chính xác cho người dùng."
     )
-    return LlmGenerateResponse(
-        provider="google",
-        model="policy",
-        phase="default",
-        content=content,
-        usage=TokenUsage(),
-        latency_ms=0,
+
+    full_prompt = "\n\n".join(prompt_parts)
+
+    return await llm_router.generate(
+        LlmGenerateRequest(
+            phase="default",
+            max_output_tokens=1536,
+            temperature=0.2,
+            messages=[LlmMessage(role="user", content=full_prompt)],
+            images=images_payload,
+            metadata={"chat_route": "task_execution", "user_id": user.user_id, "role": user.role, "file_count": len(files)},
+        )
     )
 
 
@@ -383,7 +403,7 @@ Role: {user.role}
                                 "nullable": True,
                                 "description": (
                                     "File đính kèm (tối đa 2 file/request). "
-                                    "Định dạng cho phép: .png (≤10MB), .md (≤2MB), .xlsx (≤20MB). "
+                                    "Định dạng cho phép: .png (≤10MB), .md (≤2MB). "
                                     "File sẽ được kiểm duyệt qua AI Firewall Lớp 2 trước khi xử lý."
                                 ),
                             },

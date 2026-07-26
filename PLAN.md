@@ -139,7 +139,7 @@ Chỉ dẫn:
 - [x] Endpoint public đầu tiên của VM là `POST /v1/chat`
 - [x] Xác thực demo dùng header `X-User-Id`, `X-User-Email`, `X-User-Role`; Giai đoạn 5 thay bằng Firebase JWT
 - [x] Redis Giai đoạn 3 dùng concurrency gate/state cơ bản, chưa cần worker process riêng
-- [x] File upload tối đa 2 file/request; chỉ cho phép `.xlsx`, `.png`, `.md`; `.md` tối đa 2 MB, `.png` tối đa 10 MB, `.xlsx` tối đa 20 MB
+- [x] File upload tối đa 2 file/request; chỉ cho phép `.png`, `.md`; `.md` tối đa 2 MB, `.png` tối đa 10 MB
 - [x] File raw mới upload lưu tạm ở VM (`backend/vm_service/storage/uploads/raw/`); file đã kiểm duyệt/làm sạch lưu tại VM (`backend/vm_service/storage/uploads/clean/`). EK chỉ chứa SQL và RAG, KHÔNG lưu tệp tin upload của người dùng.
 - [x] MIME chỉ check/log phụ, không tin tuyệt đối; hard rule là extension + parser đọc được file.
 - [x] AI Firewall 2 lớp:
@@ -148,7 +148,6 @@ Chỉ dẫn:
     - Xóa toàn bộ Metadata ẩn cho MỌI LOẠI FILE (không cần check độc hại hay không).
     - `.png`: Check Magic Bytes 8 ký tự `b"\x89PNG\r\n\x1a\n"`, resize bằng Pillow nếu kích thước lớn để tiết kiệm token.
     - `.md`: Xóa URL link `[text](url)` -> `text` trực tiếp bằng Regex `re.sub`.
-    - `.xlsx`: Kiểm tra định dạng ZIP bằng `zipfile.is_zipfile()`, làm sạch qua `openpyxl` (xóa macro/VBA, xóa link ngoại vi, xóa công thức hàm, `data_only=True`).
 - [x] VM CHỈ ĐƯỢC GỬI FILE ĐÃ CLEANED LÊN LLM API.
 - [x] Bảo mật kết nối nghiêm ngặt: VM bị cấm gửi request đến domain lạ ngoài danh sách trắng (chỉ gửi tới EK Service và official LLM APIs). EK chỉ chấp nhận và thực thi các request nội bộ từ VM qua khóa `X-Internal-Api-Key`.
 - [x] Agent Planner: Cấu trúc Kế hoạch thực thi (Execution Plan) chuẩn hóa gồm tên kế hoạch (`plan_name`), số bước (`total_steps`), và danh sách các bước (`steps`) chi tiết (`step_number`, tên bước `step_name`, `action`, `thought`), quản lý và lưu trữ trực tiếp bởi bảng `agent_plans` và `agent_steps` trong CSDL PostgreSQL EK.
@@ -158,7 +157,7 @@ Chỉ dẫn:
 - [x] Kết nối orchestrator với LLM Router và Enterprise Knowledge API
 - [x] Xây hàng đợi/concurrency gate Redis để giãn cách khi nhiều người dùng đồng thời
 - [x] Lưu hội thoại multi-turn bền vững vào Postgres qua Enterprise Knowledge; Redis giữ state runtime ngắn hạn
-- [x] Xây xử lý upload file ở VM: raw upload, 100% hardcode backend validation (signature check, strip metadata cho mọi file, `.xlsx` zipfile/openpyxl sanitize, `.md` regex link removal, `.png` resize tiết kiệm token), lưu file sạch cục bộ tại VM (`storage/uploads/clean/`) và chỉ gửi file sạch lên LLM API
+- [x] Xây xử lý upload file ở VM: raw upload, 100% hardcode backend validation (signature check, strip metadata cho mọi file, `.md` regex link removal, `.png` resize tiết kiệm token), lưu file sạch cục bộ tại VM (`storage/uploads/clean/`), truyền tệp `.png` và `.md` sạch trực tiếp qua Multimodal LLM Router để trả lời ngay lập tức cho người dùng trong luồng `task_execution`
 - [x] Nâng cấp AI Firewall check role theo Permission Matrix và định dạng JSON `is_valid` / `reason` / `details`
 - [x] Nâng cấp Agent Planner sinh Kế hoạch thực thi đa bước chi tiết (`plan_name`, `total_steps`, `step_number`, `step_name`, `action`, `thought`) và liên kết lưu trữ vào bảng `agent_plans` / `agent_steps`
 - [x] Thi hành bảo mật kết nối: Khóa xác thực `X-Internal-Api-Key` cho EK và kiểm soát kết nối đầu ra cho VM
@@ -167,20 +166,26 @@ Chỉ dẫn:
 
 
 
-### Giai đoạn 4 — Tích hợp MCP Tools  (5-7 ngày)
+### Giai đoạn 4 — Xây dựng kho chứng từ Markdown (4-5 ngày)
 
 #### Những thông tin cần xác nhận từ Admin trước khi bắt đầu giai đoạn này
+- [ ] Xác nhận các loại chứng từ Markdown cần xây dựng (ví dụ: Phiếu thu, Phiếu chi, Hóa đơn bán hàng, Phiếu nhập kho, Phiếu xuất kho, Hợp đồng kinh tế, Báo giá)
+- [ ] Xác nhận cấu trúc chuẩn hóa cho chứng từ Markdown (dùng YAML Frontmatter ở đầu file để lưu metadata như `voucher_id`, `type`, `date`, `partner_name`, `total_amount`, `status` + nội dung bảng Markdown bên dưới)
+- [ ] Xác nhận thư mục/vị trí lưu trữ kho chứng từ Markdown (`rag_documents/vouchers/` hoặc `storage/vouchers/`) và đồng bộ metadata vào CSDL (`vouchers` / `documents`)
+- [ ] Xác nhận cơ chế Ingestion RAG: Tự động chạy pipeline (parse frontmatter, chunking, Gemini Embedding 2 768d, lưu pgvector) cho tất cả các chứng từ Markdown trong kho để AI tra cứu RAG
 
 #### Việc cần làm giai đoạn này
+- [ ] Thiết kế bộ mẫu chứng từ Markdown chuẩn hóa (dùng YAML Frontmatter + bảng Markdown) cho từng loại nghiệp vụ: Phiếu thu, Phiếu chi, Hóa đơn bán hàng, Phiếu nhập/xuất kho, Hợp đồng, Báo giá
+- [ ] Tạo kho chứng từ Markdown demo thực tế (các file `.md` đại diện cho dữ liệu chứng từ nghiệp vụ doanh nghiệp) và đưa vào thư mục lưu trữ
+- [ ] Xây dựng bộ parser tự động đọc và trích xuất metadata từ YAML Frontmatter của các file chứng từ Markdown
+- [ ] Tích hợp Ingestion Pipeline cho chứng từ Markdown vào Enterprise Knowledge:
+  - Lưu trữ thông tin chứng từ & metadata vào bảng `vouchers` / `documents` trong PostgreSQL
+  - Tự động chunking và sinh vector embedding (768 chiều qua Gemini Embedding 2) để lưu vào bảng `chunks` (pgvector)
+- [ ] Cập nhật RAG Search API & Intent Router để AI dễ dàng tìm kiếm, lọc và trích xuất thông tin chứng từ Markdown theo metadata (ngày tháng, đối tác, mã chứng từ, loại chứng từ) cũng như tìm kiếm ngữ nghĩa
+- [ ] Viết test tự động kiểm tra pipeline ingest, lưu DB và truy vấn RAG kho chứng từ Markdown
 
-- [ ] Viết MCP tool đọc/ghi Excel
-- [ ] Viết MCP tool đọc/ghi Word
-- [ ] Viết MCP tool gửi/đọc email
-- [ ] Xây cơ chế nhận file người dùng gửi kèm trong hội thoại
-- [ ] Xây tác vụ đa phương thức: đọc ảnh + file Word, cập nhật nội dung Word theo thông tin trong ảnh
-- [ ] Xây tác vụ tổng hợp số liệu từ nhiều file Excel vào bảng tính mới
-- [ ] Lưu file kết quả AI tạo/sửa vào Firebase Storage + ghi metadata vào DB
-- [ ] Expose các tool qua MCP protocol để orchestrator gọi được
+
+
 
 ### Giai đoạn 5 — Authentication & Authorization (3-4 ngày)
 
@@ -221,6 +226,7 @@ Chỉ dẫn:
 #### Những thông tin cần xác nhận từ Admin trước khi bắt đầu giai đoạn này
 
 #### Việc cần làm giai đoạn này
+- [ ] Dựng hệ thống hòm thư thông báo mới, chờ phê duyệt
 - [ ] Dựng giao diện xem log/audit trail
 - [ ] Xây trang giám sát trạng thái LLM providers
 - [ ] Xây trang thống kê hoạt động tổng quan

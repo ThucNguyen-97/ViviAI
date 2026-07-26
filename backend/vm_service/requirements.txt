@@ -7,6 +7,5 @@ httpx==0.28.1
 google-genai==2.12.1
 anthropic==0.74.0
 redis==5.2.1
-openpyxl==3.1.5
 python-multipart==0.0.20
 Pillow==11.1.0
