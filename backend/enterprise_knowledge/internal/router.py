@@ -84,7 +84,7 @@ class MessageCreateResponse(BaseModel):
 
 
 def _clean_file_root() -> Path:
-    root = Path("/app/storage/clean_files")
+    root = Path("/app/storage/uploads/clean")
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -495,6 +495,5 @@ async def internal_list_agent_plans(
             for p in plans
         ],
     }
-
 
 

@@ -83,8 +83,7 @@ services:
       RAG_DEFAULT_SCORE_THRESHOLD: ${RAG_DEFAULT_SCORE_THRESHOLD:-0.7}
     volumes:
       - ./backend/enterprise_knowledge:/app
-      - ./rag_documents:/app/rag_documents
-      - ./backend/enterprise_knowledge/storage:/app/storage
+      - ./backend/vm_service/storage:/app/storage
     ports:
       - "8000:8000"
     depends_on:

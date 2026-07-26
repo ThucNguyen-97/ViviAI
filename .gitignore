@@ -28,10 +28,8 @@ Thumbs.db
 tmp_phase3_tests/
 storage/
 backend/vm_service/storage/
-backend/enterprise_knowledge/storage/
 
 
 # Cache
 cache/
-
 
