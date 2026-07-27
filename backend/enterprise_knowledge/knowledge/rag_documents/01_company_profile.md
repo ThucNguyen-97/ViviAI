@@ -4,6 +4,13 @@ company_name_en: "Huong Vi Viet Chili Salt Company Limited"
 company_short_name: "Hương Vị Việt"
 brand_name: "Muối Ớt Hương Vị Việt"
 slogan: "Đậm đà hương vị Việt"
+topics:
+  - "thông tin công ty"
+  - "sản phẩm muối ớt"
+  - "chính sách bán sỉ"
+  - "chính sách đại lý"
+  - "vận chuyển"
+  - "thanh toán và đổi trả"
 
 enterprise_id: "0312345678"
 tax_code: "0312345678"

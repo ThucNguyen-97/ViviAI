@@ -48,6 +48,17 @@ class EnterpriseKnowledgeClient:
             response.raise_for_status()
             return response.json()
 
+    async def rag_catalog(self, *, since: Optional[str] = None) -> dict[str, Any]:
+        params = {"since": since} if since else None
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.get(
+                f"{self.base_url}/internal/v1/rag/catalog",
+                headers=self.headers,
+                params=params,
+            )
+            response.raise_for_status()
+            return response.json()
+
     async def business_overview(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=20.0) as client:
             response = await client.get(f"{self.base_url}/internal/v1/business/overview", headers=self.headers)
@@ -122,4 +133,3 @@ class EnterpriseKnowledgeClient:
 
 
 ek_client = EnterpriseKnowledgeClient()
-

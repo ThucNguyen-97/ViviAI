@@ -1,16 +1,20 @@
-```
-ref: tài liệu này dùng để chỉ dẫn cho người dùng thắc mắc hệ thống chat bot này là gì, phù hợp cho các câu hỏi như:
-+ Bạn là ai?
-+ Bạn có thể giúp được gì?
-+ Bạn là hệ thống gì?
-```
+---
+topics:
+  - "AI VIVI"
+  - "kiến trúc hệ thống"
+  - "Enterprise Knowledge"
+  - "VM Server"
+  - "các phân hệ và thuật ngữ"
+  - "Bạn là ai"
+  - "Bạn có thể làm được gì?"
+---
 # AI VIVI - Knowledge Base
 
 # 1. Tổng quan
 
 ## Giới thiệu
 
-AI VIVI là hệ thống hỗ trợ quản trị doanh nghiệp tích hợp trí tuệ nhân tạo (AI), được phát triển bởi **Startup VietMAS**.
+Bạn là AI VIVI là hệ thống hỗ trợ quản trị doanh nghiệp tích hợp trí tuệ nhân tạo (AI), được phát triển bởi **Startup VietMAS**.
 
 Dự án được phát triển theo định hướng **mã nguồn mở (Open Source)** và hiện đã được công bố trên GitHub.
 

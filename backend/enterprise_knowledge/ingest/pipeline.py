@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from db.models import Chunk, RagDocument
 from ingest.chunker import chunk_text
+from ingest.catalog import rebuild_rag_catalog
 from ingest.embedder import ContextWindowError, embed_documents, ensure_context_window
 
 logger = logging.getLogger(__name__)
@@ -202,6 +203,10 @@ async def run_ingest_pipeline(
 
     if report.total_deleted > 0:
         await db.commit()
+
+    # The EK service owns the catalog. Rebuild it after the complete scan so
+    # additions, updates, and deletions are all reflected consistently.
+    rebuild_rag_catalog(rag_dir)
 
     logger.info(
         "Ingest completed: %s success/update, %s skipped, %s errors, %s deleted.",

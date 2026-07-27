@@ -25,6 +25,8 @@ from core.config import settings
 from db.base import get_db
 from db.models import CleanFile, Conversation, LlmProviderCall, Message
 from internal.auth import require_internal_api_key
+from ingest.catalog import get_rag_catalog, rebuild_rag_catalog
+from ingest.pipeline import DEFAULT_RAG_DIR
 from rag.retriever import DEFAULT_SCORE_THRESHOLD, DEFAULT_TOP_K, similarity_search
 from rag.schemas import RagSearchRequest, RagSearchResponse
 
@@ -303,6 +305,21 @@ async def internal_rag_search(
     )
 
 
+@router.get("/rag/catalog")
+async def internal_rag_catalog(
+    since: Optional[str] = Query(default=None, description="Catalog updated_at đã cache ở VM."),
+):
+    """Return the EK-owned RAG catalog, or only its current timestamp when unchanged."""
+    catalog = get_rag_catalog()
+    if catalog["updated_at"] is None:
+        catalog = rebuild_rag_catalog(DEFAULT_RAG_DIR)
+
+    if since and since == catalog["updated_at"]:
+        return {"updated": False, "updated_at": catalog["updated_at"]}
+
+    return {"updated": True, **catalog}
+
+
 @router.get("/business/overview", response_model=BusinessOverviewResponse)
 async def internal_business_overview(db: AsyncSession = Depends(get_db)):
     return await query_layer.get_business_overview(db)
@@ -495,5 +512,4 @@ async def internal_list_agent_plans(
             for p in plans
         ],
     }
-
 

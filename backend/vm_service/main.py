@@ -5,8 +5,14 @@ from llm.adapters import LlmProviderError
 from llm.router import llm_router
 from llm.schemas import LlmGenerateRequest, LlmGenerateResponse, RouterStatusResponse
 from orchestrator.chat import router as chat_router
+from runtime.rag_catalog import refresh_rag_catalog
 
 app = FastAPI(title="VietMAS VM Service", version="0.3.0")
+
+
+@app.on_event("startup")
+async def load_rag_catalog_on_startup() -> None:
+    await refresh_rag_catalog(force=True)
 
 app.add_middleware(
     CORSMiddleware,

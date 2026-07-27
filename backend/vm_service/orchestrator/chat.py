@@ -15,6 +15,7 @@ from firewall.schemas import ExecutionPlan, ExecutionStep, FirewallDecision, Int
 from llm.router import llm_router
 from llm.schemas import LlmGenerateRequest, LlmGenerateResponse, LlmMessage, TokenUsage
 from runtime.redis_gate import redis_concurrency_gate, set_runtime_state
+from runtime.rag_catalog import refresh_rag_catalog
 
 
 REQUEST_REJECT_MESSAGE = "Yêu cầu của bạn không thể xử lý hoặc thông tin bạn yêu cầu không tồn tại"
@@ -24,29 +25,6 @@ FILE_CONTEXT_SOFT_ISSUES = {
     "missing_file_context",
     "potential_unauthorized_file_access",
 }
-RAG_KNOWLEDGE_CATALOG = [
-    {
-        "source": "01_system_overview.md",
-        "topics": [
-            "AI VIVI / VietMAS system overview",
-            "muc tieu he thong",
-            "kien truc Enterprise Knowledge, VM Server, Frontend",
-            "phan he cau hinh chung va tai chinh",
-            "kha nang AI agent, RAG, tool, workflow, file editing",
-        ],
-    },
-    {
-        "source": "00_company_profile.md",
-        "topics": [
-            "cong ty Huong Vi Viet / Muoi Ot",
-            "danh muc san pham muoi ot",
-            "chinh sach ban si, chiet khau, dai ly",
-            "giao hang, thanh toan, cong no, doi hang, bao quan",
-            "thong tin lien he cong ty",
-        ],
-    },
-]
-
 router = APIRouter(prefix="/v1", tags=["Chat Orchestrator"])
 
 
@@ -129,6 +107,7 @@ async def classify_intent(message: str, user: UserContext, firewall: FirewallDec
     if files:
         return "task_execution"
 
+    rag_knowledge_catalog = await refresh_rag_catalog()
     file_summary = [
         {"file_name": file.original_file_name, "file_type": file.file_type, "flags": file.flags}
         for file in files
@@ -145,7 +124,7 @@ Intent hop le:
 - general_chat: trao doi thong thuong khong can du lieu noi bo; gom ca cau hoi ve trang thai chatbot/API/demo neu khong yeu cau truy van du lieu nghiep vu
 
 RAG knowledge catalog hien co:
-{json.dumps(RAG_KNOWLEDGE_CATALOG, ensure_ascii=False, indent=2)}
+{json.dumps(rag_knowledge_catalog, ensure_ascii=False, indent=2)}
 
 Quy tac phan loai:
 - Chon rag_query neu cau hoi co the tra loi tot hon bang tri thuc trong RAG knowledge catalog, ke ca khi nguoi dung noi mo ho nhu "he thong nay" hoac "cong ty".
