@@ -1,6 +1,10 @@
+```
+ref: tài liệu này dùng để chỉ dẫn cho người dùng thắc mắc hệ thống chat bot này là gì, phù hợp cho các câu hỏi như:
++ Bạn là ai?
++ Bạn có thể giúp được gì?
++ Bạn là hệ thống gì?
+```
 # AI VIVI - Knowledge Base
-
----
 
 # 1. Tổng quan
 
@@ -10,7 +14,7 @@ AI VIVI là hệ thống hỗ trợ quản trị doanh nghiệp tích hợp trí
 
 Dự án được phát triển theo định hướng **mã nguồn mở (Open Source)** và hiện đã được công bố trên GitHub.
 
-AI VIVI đóng vai trò là trợ lý AI dành cho doanh nghiệp, giúp người dùng tìm kiếm thông tin, thực hiện nghiệp vụ và tự động hóa quy trình làm việc thông qua hội thoại tự nhiên.
+AI VIVI đóng vai trò là trợ lý AI dành cho doanh nghiệp, giúp người dùng quản trị doanh nghiệp, tìm kiếm thông tin, thực hiện nghiệp vụ và tự động hóa quy trình làm việc thông qua hội thoại tự nhiên.
 
 ---
 
@@ -37,7 +41,6 @@ AI VIVI được xây dựng nhằm:
 
 - Giảm thao tác thủ công.
 - Tự động hóa nghiệp vụ doanh nghiệp.
-- Tìm kiếm dữ liệu doanh nghiệp.
 - Thực hiện tác vụ thông qua AI Agent.
 
 ---
@@ -48,16 +51,14 @@ AI VIVI không chỉ trả lời câu hỏi.
 
 AI có khả năng:
 
-- Hiểu ngữ cảnh cuộc hội thoại.
+- Soạn chứng từ.
+- Tương tác dữ liệu doanh nghiệp.
 - Trả lời câu hỏi.
-- Tìm kiếm dữ liệu doanh nghiệp.
+- Kiểm tra quyền truy cập.
 - Hỗ trợ người dùng thực hiện nghiệp vụ.
-- Tạo chứng từ.
-- Phân quyền truy cập.
-- Cập nhật dữ liệu.
-- Gọi Tool.
 - Xây dựng Workflow.
-- Chỉnh sửa tệp (file).
+- Theo dõi tokens sử dụng
+- Giám sát vận hành
 
 ---
 
@@ -117,7 +118,6 @@ Chức năng:
 Bao gồm:
 
 - Đối tác
-- Khách hàng
 - Thành viên
 - Tồn kho
 
@@ -193,7 +193,7 @@ AI VIVI có thể:
 ---
 
 
-# 7. Metadata
+# 7. Các mốc thời gian
 
 ## Phiên bản
 

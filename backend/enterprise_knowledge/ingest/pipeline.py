@@ -19,7 +19,8 @@ from ingest.embedder import ContextWindowError, embed_documents, ensure_context_
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_RAG_DIR = Path("/app/rag_documents")
+# The Markdown source directory lives under the broader knowledge directory.
+DEFAULT_RAG_DIR = Path("/app/knowledge/rag_documents")
 SUPPORTED_EXTENSION = ".md"
 
 

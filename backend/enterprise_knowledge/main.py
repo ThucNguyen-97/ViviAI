@@ -16,7 +16,7 @@ from admin.router import router as admin_dashboard_router
 from core.config import settings
 from business.router import router as business_router
 from db.base import get_db
-from ingest.pipeline import run_ingest_pipeline, IngestReport
+from ingest.pipeline import DEFAULT_RAG_DIR, run_ingest_pipeline, IngestReport
 from internal.router import router as internal_router
 from rag.router import router as rag_router
 
@@ -76,20 +76,20 @@ class IngestResponse(BaseModel):
 async def trigger_ingest(
     rag_dir: Optional[str] = Query(
         default=None,
-        description="Đường dẫn thư mục Markdown RAG (mặc định: /app/rag_documents)",
+        description="Đường dẫn thư mục Markdown RAG (mặc định: /app/knowledge/rag_documents)",
     ),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Kích hoạt pipeline ingest Markdown RAG.
 
-    - Quét thư mục `rag_documents/` (hoặc thư mục được chỉ định).
+    - Quét thư mục `knowledge/rag_documents/` (hoặc thư mục được chỉ định).
     - Chỉ ingest file `.md`; các định dạng khác được báo lỗi định dạng.
     - File trùng không đổi sẽ bị bỏ qua; file đổi mtime hoặc size sẽ được ingest lại.
     - Tài liệu vượt ngữ cảnh 8.192 token của `gemini-embedding-2` sẽ bị báo lỗi.
     - Chunk → Embed bằng Google Gen AI SDK → Lưu vào PostgreSQL/pgvector.
     """
-    target_dir = Path(rag_dir) if rag_dir else Path("/app/rag_documents")
+    target_dir = Path(rag_dir) if rag_dir else DEFAULT_RAG_DIR
 
     if not target_dir.exists():
         raise HTTPException(
