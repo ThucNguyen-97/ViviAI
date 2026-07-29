@@ -329,10 +329,20 @@ async def internal_business_overview(db: AsyncSession = Depends(get_db)):
 async def internal_partners(
     search: Optional[str] = Query(default=None, description="Search by name, phone, email, or address."),
     partner_type: Optional[str] = Query(default=None, description="Filter by partner type."),
+    user_id: Optional[str] = Query(default=None),
+    user_role: Optional[str] = Query(default=None),
     limit: int = Depends(pagination_limit),
     offset: int = Depends(pagination_offset),
     db: AsyncSession = Depends(get_db),
 ):
+    if user_id and user_role:
+        return await query_layer.list_partners_for_user(
+            db,
+            user_id=user_id,
+            user_role=user_role,
+            limit=limit,
+            offset=offset,
+        )
     return await query_layer.list_partners(
         db,
         search=search,
@@ -512,4 +522,3 @@ async def internal_list_agent_plans(
             for p in plans
         ],
     }
-

@@ -135,7 +135,6 @@ Chỉ dẫn:
 - [x] Multi-turn source of truth: lưu bền vững trong PostgreSQL qua `conversations/messages`; Redis chỉ giữ queue, lock, state tác vụ đang chạy và cache ngắn hạn
 - [x] Giai đoạn 3 chưa cần streaming token; làm request/response non-stream trước, streaming để Giai đoạn 7
 - [x] Intent ban đầu gồm `rag_query`, `business_query`, `task_execution`, `general_chat`
-- [x] Trước intent classifier luôn chạy `ai_firewall`
 - [x] Endpoint public đầu tiên của VM là `POST /v1/chat`
 - [x] Xác thực demo dùng header `X-User-Id`, `X-User-Email`, `X-User-Role`; Giai đoạn 5 thay bằng Firebase JWT
 - [x] Redis Giai đoạn 3 dùng concurrency gate/state cơ bản, chưa cần worker process riêng
@@ -153,7 +152,7 @@ Chỉ dẫn:
 - [x] Agent Planner: Cấu trúc Kế hoạch thực thi (Execution Plan) chuẩn hóa gồm tên kế hoạch (`plan_name`), số bước (`total_steps`), và danh sách các bước (`steps`) chi tiết (`step_number`, tên bước `step_name`, `action`, `thought`), quản lý và lưu trữ trực tiếp bởi bảng `agent_plans` và `agent_steps` trong CSDL PostgreSQL EK.
 
 #### Việc cần làm giai đoạn này
-- [x] Thiết kế orchestrator state graph: `ai_firewall` -> intent classifier -> route `rag_query`/`business_query`/`task_execution`/`general_chat`
+- [x] Thiết kế luồng làm việc: User gửi chat > AI_firewall > Planner > Execution > Response
 - [x] Kết nối orchestrator với LLM Router và Enterprise Knowledge API
 - [x] Xây hàng đợi/concurrency gate Redis để giãn cách khi nhiều người dùng đồng thời
 - [x] Lưu hội thoại multi-turn bền vững vào Postgres qua Enterprise Knowledge; Redis giữ state runtime ngắn hạn
@@ -166,25 +165,17 @@ Chỉ dẫn:
 
 
 
-### Giai đoạn 4 — Xây dựng kho chứng từ Markdown (4-5 ngày)
-
+### Giai đoạn 4 — Xây dựng MCP  (4-5 ngày)
 #### Những thông tin cần xác nhận từ Admin trước khi bắt đầu giai đoạn này
-- [ ] Xác nhận các loại chứng từ Markdown cần xây dựng (ví dụ: Phiếu thu, Phiếu chi, Hóa đơn bán hàng, Phiếu nhập kho, Phiếu xuất kho, Hợp đồng kinh tế, Báo giá)
-- [ ] Xác nhận cấu trúc chuẩn hóa cho chứng từ Markdown (dùng YAML Frontmatter ở đầu file để lưu metadata như `voucher_id`, `type`, `date`, `partner_name`, `total_amount`, `status` + nội dung bảng Markdown bên dưới)
-- [ ] Xác nhận thư mục/vị trí lưu trữ kho chứng từ Markdown (`rag_documents/vouchers/` hoặc `storage/vouchers/`) và đồng bộ metadata vào CSDL (`vouchers` / `documents`)
-- [ ] Xác nhận cơ chế Ingestion RAG: Tự động chạy pipeline (parse frontmatter, chunking, Gemini Embedding 2 768d, lưu pgvector) cho tất cả các chứng từ Markdown trong kho để AI tra cứu RAG
+
+
 
 #### Việc cần làm giai đoạn này
-- [ ] Thiết kế bộ mẫu chứng từ Markdown chuẩn hóa (dùng YAML Frontmatter + bảng Markdown) cho từng loại nghiệp vụ: Phiếu thu, Phiếu chi, Hóa đơn bán hàng, Phiếu nhập/xuất kho, Hợp đồng, Báo giá
-- [ ] Tạo kho chứng từ Markdown demo thực tế (các file `.md` đại diện cho dữ liệu chứng từ nghiệp vụ doanh nghiệp) và đưa vào thư mục lưu trữ
-- [ ] Xây dựng bộ parser tự động đọc và trích xuất metadata từ YAML Frontmatter của các file chứng từ Markdown
-- [ ] Tích hợp Ingestion Pipeline cho chứng từ Markdown vào Enterprise Knowledge:
-  - Lưu trữ thông tin chứng từ & metadata vào bảng `vouchers` / `documents` trong PostgreSQL
-  - Tự động chunking và sinh vector embedding (768 chiều qua Gemini Embedding 2) để lưu vào bảng `chunks` (pgvector)
-- [ ] Cập nhật RAG Search API & Intent Router để AI dễ dàng tìm kiếm, lọc và trích xuất thông tin chứng từ Markdown theo metadata (ngày tháng, đối tác, mã chứng từ, loại chứng từ) cũng như tìm kiếm ngữ nghĩa
-- [ ] Viết test tự động kiểm tra pipeline ingest, lưu DB và truy vấn RAG kho chứng từ Markdown
-
-
+- [x] bộ khung MCP mcp_manager
+- [x] Email MCP - tool: check_email
+- [x] Email MCP - tool: search_email (refresh_inbox trước, lọc partner, lưu SQLite, hỗ trợ date_from, only_unreplied)
+- [x] Email MCP - cải tiến send_email: tự động refresh_inbox() trước khi gửi, đánh dấu replied_at
+- [x] VM Endpoint `GET /email/history` — xem lịch sử history_message, hỗ trợ filter sender/query/date_from/only_unreplied
 
 
 ### Giai đoạn 5 — Authentication & Authorization (3-4 ngày)
@@ -204,6 +195,7 @@ Chỉ dẫn:
 #### Những thông tin cần xác nhận từ Admin trước khi bắt đầu giai đoạn này
 
 #### Việc cần làm giai đoạn này
+- [ ] Dựng hệ cơ chế nhận thông báo, chờ phê duyệt
 - [ ] Ghi log request/response vào Enterprise Knowledge
 - [ ] Ghi log hành động ghi/sửa dữ liệu (audit trail)
 - [ ] Xây cơ chế "dừng khẩn cấp"
@@ -226,7 +218,6 @@ Chỉ dẫn:
 #### Những thông tin cần xác nhận từ Admin trước khi bắt đầu giai đoạn này
 
 #### Việc cần làm giai đoạn này
-- [ ] Dựng hệ thống hòm thư thông báo mới, chờ phê duyệt
 - [ ] Dựng giao diện xem log/audit trail
 - [ ] Xây trang giám sát trạng thái LLM providers
 - [ ] Xây trang thống kê hoạt động tổng quan

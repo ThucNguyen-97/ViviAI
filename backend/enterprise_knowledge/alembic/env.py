@@ -13,7 +13,7 @@ from db.models import (
     User, RagDocument, Document, Chunk, Voucher,
     Conversation, Message, AgentPlan, AgentStep,
     LlmProviderCall, CleanFile,
-    Partner, Inventory, GeneralJournal, GeneralJournalLine,
+    Partner, ManagerFollowedPartner, Inventory, GeneralJournal, GeneralJournalLine,
 )
 
 

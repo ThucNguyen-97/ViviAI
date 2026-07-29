@@ -338,6 +338,20 @@ class Partner(Base):
     )
 
 
+class ManagerFollowedPartner(Base):
+    """Partners followed by an individual manager for email monitoring."""
+
+    __tablename__ = "manager_followed_partners"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    partner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("partners.id", ondelete="CASCADE"), primary_key=True
+    )
+    partner_email: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
 class Inventory(Base):
     """Báº£ng lÆ°u thĂ´ng tin kho hĂ ng / sáº£n pháº©m nghiá»‡p vá»¥."""
     __tablename__ = "inventory"

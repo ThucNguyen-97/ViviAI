@@ -57,7 +57,6 @@ def _decision_from_text(text: str) -> FirewallDecision:
             risk_level="high",
             reason="Firewall returned invalid JSON.",
             detected_issues=["invalid_firewall_json"],
-            recommended_intent="general_chat",
             details={"user_role": "unknown"},
             raw={"text": text},
         )
@@ -112,11 +111,9 @@ Chi tra ve JSON hop le theo cau truc:
     "requested_title": "Mo ta ngan gon yeu cau"
   }},
   "risk_level": "low",
-  "detected_issues": [],
-  "recommended_intent": "rag_query"
+  "detected_issues": []
 }}
 
-Gia tri recommended_intent chi duoc la: rag_query, business_query, task_execution, general_chat.
 Vai tro nguoi dung: {user.role}
 User id: {user.user_id}
 Yeu cau nguoi dung:

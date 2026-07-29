@@ -20,7 +20,7 @@ from business.schemas import (
     PartnerListResponse,
     PartnerRead,
 )
-from db.models import GeneralJournal, GeneralJournalLine, Inventory, Partner
+from db.models import GeneralJournal, GeneralJournalLine, Inventory, ManagerFollowedPartner, Partner
 
 
 def _money(value) -> Decimal:
@@ -60,6 +60,53 @@ async def list_partners(
     result = await db.execute(_apply_pagination(base, limit, offset))
     partners = result.scalars().all()
 
+    return PartnerListResponse(
+        total=total or 0,
+        limit=limit,
+        offset=offset,
+        partners=[
+            PartnerRead(
+                id=str(partner.id),
+                name=partner.name,
+                partner_type=partner.partner_type,
+                phone=partner.phone,
+                email=partner.email,
+                address=partner.address,
+                created_at=partner.created_at,
+            )
+            for partner in partners
+        ],
+    )
+
+
+async def list_partners_for_user(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    user_role: str,
+    limit: int = 100,
+    offset: int = 0,
+) -> PartnerListResponse:
+    """CEOs/admins see all partners; managers see only followed partners."""
+
+    if user_role in {"ceo", "admin"}:
+        return await list_partners(db, limit=limit, offset=offset)
+
+    base = (
+        select(Partner)
+        .join(ManagerFollowedPartner, ManagerFollowedPartner.partner_id == Partner.id)
+        .where(ManagerFollowedPartner.user_id == user_id)
+        .order_by(Partner.created_at.desc())
+    )
+    count_statement = (
+        select(func.count())
+        .select_from(Partner)
+        .join(ManagerFollowedPartner, ManagerFollowedPartner.partner_id == Partner.id)
+        .where(ManagerFollowedPartner.user_id == user_id)
+    )
+    total = await db.scalar(count_statement)
+    result = await db.execute(_apply_pagination(base, limit, offset))
+    partners = result.scalars().all()
     return PartnerListResponse(
         total=total or 0,
         limit=limit,

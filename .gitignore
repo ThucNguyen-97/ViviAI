@@ -28,8 +28,8 @@ Thumbs.db
 tmp_phase3_tests/
 storage/
 backend/vm_service/storage/
+backend/vm_service/mcp_tools/email_mcp/email_history.db
 
 
 # Cache
 cache/
-

@@ -61,4 +61,7 @@ async def redis_concurrency_gate():
 
 
 async def set_runtime_state(key: str, value: str) -> None:
-    await redis_client.setex(key, settings.CHAT_RUNTIME_STATE_TTL_SECONDS, value)
+    try:
+        await redis_client.setex(key, settings.CHAT_RUNTIME_STATE_TTL_SECONDS, value)
+    except Exception:
+        pass

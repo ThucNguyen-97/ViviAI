@@ -1,7 +1,11 @@
-Database Permission Matrix
+Database or MCP Permission Matrix
 
-Database / Column                | Admin | CEO | Manager
+Database or MCP / Column                | Admin | CEO | Manager
 ---------------------------------|-------|-----|----------
+email_mcp                        |       |     | 
+├── check_email                  | RWD   | RW  | RW(Followed Partners)
+└── send_email                   | RWD   | RW  | RW(Followed Partners)
+
 users                            | RWD   | R   | RW(Self)
 ├── id                           | RWD   | R   | R(Self)
 ├── email                        | RWD   | R   | RW(Self)

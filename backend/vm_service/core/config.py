@@ -1,10 +1,20 @@
+from pathlib import Path
+from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+SERVICE_DIR = Path(__file__).resolve().parents[1]
+
+# Nạp .env vào os.environ cho toàn bộ VM service
+load_dotenv(ROOT_DIR / ".env", override=True)
+load_dotenv(SERVICE_DIR / ".env", override=True)
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(ROOT_DIR / ".env", SERVICE_DIR / ".env", ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -32,6 +42,18 @@ class Settings(BaseSettings):
     MAX_MD_BYTES: int = 2 * 1024 * 1024
     MAX_PNG_BYTES: int = 10 * 1024 * 1024
     RAG_CATALOG_CACHE_TTL_SECONDS: float = 300.0
+
+    EMAIL_SMTP_HOST: str = ""
+    EMAIL_SMTP_PORT: int = 587
+    EMAIL_SMTP_FROM: str = ""
+    EMAIL_SMTP_USERNAME: str = ""
+    EMAIL_SMTP_PASSWORD: str = ""
+    EMAIL_SMTP_TLS: bool = True
+    EMAIL_IMAP_HOST: str = "imap.gmail.com"
+    EMAIL_IMAP_PORT: int = 993
+    EMAIL_IMAP_MAILBOX: str = "INBOX"
+    EMAIL_IMAP_USERNAME: str = ""
+    EMAIL_IMAP_PASSWORD: str = ""
 
     # USD per 1M tokens for the configured Phase 2 models.
     GOOGLE_INPUT_USD_PER_MTOK: float = 0.25
