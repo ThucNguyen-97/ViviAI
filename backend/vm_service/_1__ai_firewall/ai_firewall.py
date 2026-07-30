@@ -1,17 +1,13 @@
 import json
 from pathlib import Path
 
-from google import genai
-from google.genai import types
-
-from core.config import settings
-from firewall.schemas import FirewallDecision, ProcessedFile, UserContext
+from _1__ai_firewall.schemas import FirewallDecision, UserContext
 from llm.router import llm_router
 from llm.schemas import LlmGenerateRequest, LlmMessage
 
 
 FALLBACK_DENY_ISSUES = {"prompt_injection", "privilege_escalation", "unsafe_file"}
-PERMISSION_MATRIX_PATH = Path(__file__).resolve().parents[1] / "knowledge" / ".permission_matrix.txt"
+PERMISSION_MATRIX_PATH = Path(__file__).resolve().parent / ".permission_matrix.txt"
 
 
 def _json_object(text: str) -> dict:
@@ -25,14 +21,6 @@ def _json_object(text: str) -> dict:
     if start >= 0 and end >= start:
         cleaned = cleaned[start : end + 1]
     return json.loads(cleaned)
-
-
-_DEFAULT_PERMISSION_MATRIX = """
-Permission Matrix (Bang tra cuu quyen truy cap):
-- admin: Toan quyen quan tri, xem va truy van tat ca du lieu he thong, log, CSDL, tai lieu RAG.
-- ceo: Xem du lieu tong quan doanh nghiep, doanh thu, ton kho, RAG. KHONG duoc xem thông tin/email riêng cua CEO khac hoac du lieu nhay cam bi cam.
-- manager: Chi duoc truy van va xem du lieu nghiep vu gan voi chinh user_id cua minh. KHONG duoc truy van danh sach doanh thu/ton kho/but toan rong cua toan cong ty.
-"""
 
 
 def _load_permission_matrix() -> str:
@@ -54,14 +42,12 @@ def _decision_from_text(text: str) -> FirewallDecision:
         return FirewallDecision(
             is_valid=False,
             allowed=False,
-            risk_level="high",
             reason="Firewall returned invalid JSON.",
             detected_issues=["invalid_firewall_json"],
             details={"user_role": "unknown"},
             raw={"text": text},
         )
     
-    # Standardize is_valid and allowed flags
     is_valid = data.get("is_valid")
     allowed = data.get("allowed")
     if is_valid is None and allowed is not None:
@@ -83,14 +69,6 @@ def _decision_from_text(text: str) -> FirewallDecision:
     return decision
 
 
-def _role_policy(role: str) -> str:
-    if role == "admin":
-        return "Toan quyen quan tri va truy van du lieu he thong."
-    if role == "ceo":
-        return "Duoc truy van du lieu tong quan doanh nghiep, khong duoc xem email CEO khac."
-    return "Chi duoc truy van nghiep vu gan voi chinh user_id cua minh; khong duoc xem du lieu nguoi khac."
-
-
 async def check_message(message: str, user: UserContext) -> FirewallDecision:
     prompt = f"""
 Ban la AI firewall danh gia tinh hop le va quyen truy cap cua nguoi dung cho he thong VietMAS.
@@ -100,7 +78,7 @@ Nhiem vu cua ban: Danh gia xem yeu cau cua nguoi dung co hop le hay khong (check
 
 Quy tac kiem tra:
 1. Neu hop le theo vai tro va khong vi pham: tra ve "is_valid": true, "reason": "".
-2. Neu khong hop le hoac vuot quyen: tra ve "is_valid": false, dien ly do giai thich ngan gọn vao "reason".
+2. Neu khong hop le hoac vuot quyen: tra ve "is_valid": false, dien ly do giai thich ngan gon vao "reason".
 
 Chi tra ve JSON hop le theo cau truc:
 {{
@@ -108,9 +86,8 @@ Chi tra ve JSON hop le theo cau truc:
   "reason": "",
   "details": {{
     "user_role": "{user.role}",
-    "requested_title": "Mo ta ngan gon yeu cau"
+    "requested_title": "Tieu de yeu cau (toi da 5-7 tu)"
   }},
-  "risk_level": "low",
   "detected_issues": []
 }}
 

@@ -8,7 +8,7 @@ from typing import Sequence
 from fastapi import HTTPException, UploadFile, status
 
 from core.config import settings
-from firewall.schemas import FirewallDecision, ProcessedFile, UserContext
+from _1__ai_firewall.schemas import FirewallDecision, ProcessedFile, UserContext
 
 
 FILE_REJECT_MESSAGE = "Tệp tin bạn gửi không phù hợp với chính sách hệ thống"
@@ -42,13 +42,6 @@ def _safe_name(filename: str) -> str:
 
 
 def _check_signature(data: bytes, raw_path: Path, extension: str) -> None:
-    """Kiểm tra Signature Magic Bytes và cấu trúc tệp chuẩn bằng code Backend.
-
-    Defense-in-depth chống giả danh đuôi file:
-    - .png: kiểm tra magic bytes PNG chính xác 8 byte đầu
-    - .md : kiểm tra UTF-8 + không phải binary file giả danh text
-    """
-    # Danh sách magic bytes của các file binary phổ biến (dùng để loại trừ cho .md)
     KNOWN_BINARY_SIGNATURES = [
         b"\x89PNG\r\n\x1a\n",   # PNG
         b"PK\x03\x04",          # ZIP / XLSX / DOCX / JAR
@@ -70,20 +63,16 @@ def _check_signature(data: bytes, raw_path: Path, extension: str) -> None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
 
     elif extension == ".md":
-        # Lớp 1: phải decode được UTF-8
         try:
             data.decode("utf-8")
         except UnicodeDecodeError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
-        # Lớp 2: không được bắt đầu bằng known binary magic bytes (chống script/binary giả danh .md)
         for sig in KNOWN_BINARY_SIGNATURES:
             if data.startswith(sig):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=FILE_REJECT_MESSAGE)
 
 
-
 def sanitize_md_for_prompt(md_content: str) -> str:
-    """Xóa đường dẫn URL Markdown [text](url) -> text bằng Regex."""
     return re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", md_content)
 
 
@@ -93,9 +82,7 @@ def _sanitize_markdown(raw_path: Path, target_path: Path) -> None:
     target_path.write_text(clean_text, encoding="utf-8")
 
 
-
 def _resize_and_strip_png(raw_path: Path, target_path: Path, max_dimension: int = 1024) -> bool:
-    """Xóa sạch Metadata EXIF cho ảnh PNG và resize nếu quá lớn để tiết kiệm token."""
     try:
         from PIL import Image
         with Image.open(raw_path) as img:
@@ -138,7 +125,6 @@ async def process_uploads(files: Sequence[UploadFile], user: UserContext) -> lis
         raw_path = upload_raw_dir() / f"{file_uuid}{extension}"
         raw_path.write_bytes(data)
 
-        # 1. Check Signature Magic Bytes
         _check_signature(data, raw_path, extension)
 
         clean_path = upload_clean_dir() / f"{file_uuid}{extension}"
@@ -167,4 +153,3 @@ async def process_uploads(files: Sequence[UploadFile], user: UserContext) -> lis
         processed_files.append(processed)
 
     return processed_files
-

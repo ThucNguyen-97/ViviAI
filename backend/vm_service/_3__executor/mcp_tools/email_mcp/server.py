@@ -29,7 +29,6 @@ from core.config import settings
 
 DB_PATH = Path(__file__).resolve().parent / "email_history.db"
 
-# Sentinel UID cho mail đi (âm để không bị trùng với UID IMAP dương)
 _SENT_UID_BASE = -1
 
 
@@ -40,7 +39,6 @@ def _get_db() -> sqlite3.Connection:
 
 
 def _init_db() -> None:
-    """Khởi tạo bảng history_message thuần túy, không có cột phụ direction hay replied_at."""
     with _get_db() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS history_message (
@@ -56,10 +54,13 @@ def _init_db() -> None:
                 message_id      TEXT UNIQUE,
                 in_reply_to     TEXT,
                 references_ids  TEXT,
-                imap_uid        INTEGER
+                imap_uid        INTEGER,
+                source_mailbox  TEXT
             )
         """)
-        # Cập nhật thread_id rỗng thành message_id cho các bản ghi cũ
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(history_message)").fetchall()}
+        if "source_mailbox" not in columns:
+            conn.execute("ALTER TABLE history_message ADD COLUMN source_mailbox TEXT")
         try:
             conn.execute("UPDATE history_message SET thread_id = message_id WHERE thread_id IS NULL OR thread_id = ''")
         except Exception:
@@ -67,17 +68,14 @@ def _init_db() -> None:
         conn.commit()
 
 
-
 _init_db()
 
 
 def _company_email() -> str:
-    """Địa chỉ email của công ty lấy từ cấu hình SMTP (EMAIL_SMTP_FROM)."""
     return (os.getenv("EMAIL_SMTP_FROM") or settings.EMAIL_SMTP_FROM or "").strip().lower()
 
 
 def _get_partner_whitelist() -> set[str]:
-    """Trả về tập hợp các email / domain được công nhận là đối tác."""
     whitelist: set[str] = set()
 
     env_whitelist = os.getenv("EMAIL_PARTNER_WHITELIST", "")
@@ -147,14 +145,14 @@ def _insert_message(
     in_reply_to: str,
     references_ids: str,
     imap_uid: int,
+    source_mailbox: str = "",
 ) -> bool:
-    """INSERT OR IGNORE bản ghi vào history_message. Trả về True nếu thêm mới."""
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO history_message
         (date, thread_id, from_name, from_email, to_email, Cc, body_plain_text,
-         subject, message_id, in_reply_to, references_ids, imap_uid)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         subject, message_id, in_reply_to, references_ids, imap_uid, source_mailbox)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             date,
@@ -169,13 +167,33 @@ def _insert_message(
             in_reply_to,
             references_ids,
             imap_uid,
+            source_mailbox,
         ),
     )
     return cursor.rowcount > 0
 
 
+def _resolve_mailbox(imap: imaplib.IMAP4_SSL, desired: str) -> str:
+    try:
+        status, rows = imap.list()
+        if status == "OK":
+            desired_key = desired.strip().casefold()
+            for row in rows or []:
+                if not isinstance(row, bytes):
+                    continue
+                text = row.decode("utf-8", errors="replace").strip()
+                if text.endswith('"') and '"' in text[:-1]:
+                    mailbox_name = text.rsplit('"', 2)[-2]
+                else:
+                    mailbox_name = text.rsplit(" ", 1)[-1]
+                if mailbox_name.strip().casefold() == desired_key:
+                    return mailbox_name.strip()
+    except Exception:
+        pass
+    return desired
+
+
 def refresh_inbox() -> dict[str, Any]:
-    """Kết nối IMAP, phân loại và đồng bộ mail partner vào history_message."""
     _init_db()
 
     host = (os.getenv("EMAIL_IMAP_HOST") or settings.EMAIL_IMAP_HOST).strip()
@@ -183,6 +201,11 @@ def refresh_inbox() -> dict[str, Any]:
     password = os.getenv("EMAIL_IMAP_PASSWORD") or settings.EMAIL_IMAP_PASSWORD
     port = int(os.getenv("EMAIL_IMAP_PORT") or settings.EMAIL_IMAP_PORT or 993)
     mailbox = (os.getenv("EMAIL_IMAP_MAILBOX") or settings.EMAIL_IMAP_MAILBOX or "INBOX").strip()
+    partner_mailbox = (
+        os.getenv("EMAIL_IMAP_PARTNER_MAILBOX")
+        or settings.EMAIL_IMAP_PARTNER_MAILBOX
+        or "Partner"
+    ).strip()
 
     if not host or not username or not password:
         return {
@@ -190,18 +213,19 @@ def refresh_inbox() -> dict[str, Any]:
             "reason": "Chưa cấu hình thông tin kết nối EMAIL_IMAP_HOST/USERNAME/PASSWORD",
             "imported_count": 0,
             "moved_other_count": 0,
+            "moved_partner_count": 0,
         }
 
     whitelist = _get_partner_whitelist()
     company = _company_email()
 
     with _get_db() as conn:
-        # Chỉ lấy MAX imap_uid của các mail đến (imap_uid > 0)
         row = conn.execute("SELECT MAX(imap_uid) as max_uid FROM history_message WHERE imap_uid > 0").fetchone()
         max_uid = row["max_uid"] if row and row["max_uid"] is not None else 0
 
     imported_count = 0
     moved_count = 0
+    moved_partner_count = 0
 
     try:
         imap = imaplib.IMAP4_SSL(host, port)
@@ -213,21 +237,45 @@ def refresh_inbox() -> dict[str, Any]:
                 "reason": f"Không thể chọn mailbox {mailbox}",
                 "imported_count": 0,
                 "moved_other_count": 0,
+                "moved_partner_count": 0,
             }
 
         search_criterion = f"UID {max_uid + 1}:*" if max_uid > 0 else "ALL"
         imap_status, data = imap.uid("search", None, search_criterion)
         if imap_status != "OK" or not data or not data[0]:
             imap.logout()
-            return {"status": "success", "imported_count": 0, "moved_other_count": 0}
+            sent_res = _refresh_sent_mail()
+            return {
+                "status": "partial" if sent_res.get("status") == "error" else "success",
+                "imported_count": 0,
+                "moved_other_count": 0,
+                "moved_partner_count": 0,
+                "imported_sent_count": sent_res.get("imported_count", 0),
+                "sent_sync_status": sent_res.get("status"),
+                "sent_sync_error": sent_res.get("error") or sent_res.get("reason"),
+            }
 
         uids = [int(u) for u in data[0].split() if int(u) > max_uid]
         if not uids:
             imap.logout()
-            return {"status": "success", "imported_count": 0, "moved_other_count": 0}
+            sent_res = _refresh_sent_mail()
+            return {
+                "status": "partial" if sent_res.get("status") == "error" else "success",
+                "imported_count": 0,
+                "moved_other_count": 0,
+                "moved_partner_count": 0,
+                "imported_sent_count": sent_res.get("imported_count", 0),
+                "sent_sync_status": sent_res.get("status"),
+                "sent_sync_error": sent_res.get("error") or sent_res.get("reason"),
+            }
 
         try:
             imap.create("Other")
+        except Exception:
+            pass
+        partner_mailbox = _resolve_mailbox(imap, partner_mailbox)
+        try:
+            imap.create(partner_mailbox)
         except Exception:
             pass
 
@@ -258,6 +306,13 @@ def refresh_inbox() -> dict[str, Any]:
                     except Exception:
                         pass
                 else:
+                    try:
+                        res = imap.uid("copy", str(uid), partner_mailbox)
+                        if res[0] == "OK":
+                            imap.uid("store", str(uid), "+FLAGS", "\\Deleted")
+                            moved_partner_count += 1
+                    except Exception:
+                        pass
                     body_plain_text = ""
                     if msg.is_multipart():
                         for part in msg.walk():
@@ -291,6 +346,7 @@ def refresh_inbox() -> dict[str, Any]:
                         in_reply_to=_decode_str(msg.get("In-Reply-To", "")),
                         references_ids=_decode_str(msg.get("References", "")),
                         imap_uid=uid,
+                        source_mailbox=mailbox,
                     )
                     if inserted:
                         imported_count += 1
@@ -306,13 +362,130 @@ def refresh_inbox() -> dict[str, Any]:
             "error": str(exc),
             "imported_count": imported_count,
             "moved_other_count": moved_count,
+            "moved_partner_count": moved_partner_count,
         }
 
+    sent_res = _refresh_sent_mail()
     return {
-        "status": "success",
+        "status": "partial" if sent_res.get("status") == "error" else "success",
         "imported_count": imported_count,
         "moved_other_count": moved_count,
+        "moved_partner_count": moved_partner_count,
+        "imported_sent_count": sent_res.get("imported_count", 0),
+        "sent_sync_status": sent_res.get("status"),
+        "sent_sync_error": sent_res.get("error") or sent_res.get("reason"),
     }
+
+
+def _refresh_sent_mail() -> dict[str, Any]:
+    host = (os.getenv("EMAIL_IMAP_HOST") or settings.EMAIL_IMAP_HOST).strip()
+    username = (os.getenv("EMAIL_IMAP_USERNAME") or settings.EMAIL_IMAP_USERNAME).strip()
+    password = os.getenv("EMAIL_IMAP_PASSWORD") or settings.EMAIL_IMAP_PASSWORD
+    port = int(os.getenv("EMAIL_IMAP_PORT") or settings.EMAIL_IMAP_PORT or 993)
+    desired_mailbox = (
+        os.getenv("EMAIL_IMAP_SENT_MAILBOX")
+        or settings.EMAIL_IMAP_SENT_MAILBOX
+        or "[Gmail]/Sent Mail"
+    ).strip()
+    company = _company_email()
+
+    if not host or not username or not password:
+        return {
+            "status": "skipped",
+            "reason": "Chưa cấu hình thông tin kết nối IMAP để đồng bộ Sent Mail",
+            "imported_count": 0,
+        }
+
+    imported_count = 0
+    try:
+        imap = imaplib.IMAP4_SSL(host, port)
+        imap.login(username, password)
+        mailbox = _resolve_mailbox(imap, desired_mailbox)
+        imap_status, _ = imap.select(f'"{mailbox}"', readonly=True)
+        if imap_status != "OK":
+            imap.logout()
+            return {
+                "status": "error",
+                "reason": f"Không thể chọn Sent mailbox {desired_mailbox}",
+                "imported_count": 0,
+            }
+
+        with _get_db() as conn:
+            row = conn.execute(
+                "SELECT MAX(imap_uid) AS max_uid FROM history_message "
+                "WHERE imap_uid > 0 AND source_mailbox = ?",
+                (mailbox,),
+            ).fetchone()
+            max_uid = row["max_uid"] if row and row["max_uid"] is not None else 0
+
+        search_criterion = f"UID {max_uid + 1}:*" if max_uid > 0 else "ALL"
+        imap_status, data = imap.uid("search", None, search_criterion)
+        if imap_status != "OK" or not data or not data[0]:
+            imap.logout()
+            return {"status": "success", "imported_count": 0, "mailbox": mailbox}
+
+        with _get_db() as conn:
+            for uid in (int(value) for value in data[0].split()):
+                if uid <= max_uid:
+                    continue
+                fetch_status, msg_data = imap.uid("fetch", str(uid), "(RFC822)")
+                if fetch_status != "OK" or not msg_data or not msg_data[0]:
+                    continue
+                raw_email = msg_data[0][1]
+                if not isinstance(raw_email, bytes):
+                    continue
+                msg = email.message_from_bytes(raw_email)
+                from_header = _decode_str(msg.get("From", ""))
+                from_name, from_email_addr = email.utils.parseaddr(from_header)
+                from_email_addr = from_email_addr.lower().strip()
+                if from_email_addr != company:
+                    continue
+
+                body_plain_text = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        content_disposition = str(part.get("Content-Disposition", ""))
+                        if content_type == "text/plain" and "attachment" not in content_disposition:
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                charset = part.get_content_charset() or "utf-8"
+                                body_plain_text += payload.decode(charset, errors="replace") + "\n"
+                else:
+                    payload = msg.get_payload(decode=True)
+                    if payload:
+                        charset = msg.get_content_charset() or "utf-8"
+                        body_plain_text = payload.decode(charset, errors="replace")
+
+                message_id = _decode_str(msg.get("Message-ID", f"generated-sent-{uid}"))
+                inserted = _insert_message(
+                    conn,
+                    date=_decode_str(msg.get("Date", "")),
+                    thread_id=_decode_str(msg.get("X-GM-THRID", msg.get("Thread-Index", ""))) or message_id,
+                    from_name=from_name,
+                    from_email=from_email_addr,
+                    to_email=_decode_str(msg.get("To", "")),
+                    cc=_decode_str(msg.get("Cc", "")),
+                    body_plain_text=body_plain_text.strip(),
+                    subject=_decode_str(msg.get("Subject", "")),
+                    message_id=message_id,
+                    in_reply_to=_decode_str(msg.get("In-Reply-To", "")),
+                    references_ids=_decode_str(msg.get("References", "")),
+                    imap_uid=uid,
+                    source_mailbox=mailbox,
+                )
+                if inserted:
+                    imported_count += 1
+            conn.commit()
+        imap.logout()
+    except Exception as exc:
+        return {"status": "error", "error": str(exc), "imported_count": imported_count}
+
+    return {"status": "success", "imported_count": imported_count, "mailbox": mailbox}
+
+
+def _refresh_for_tool() -> dict[str, Any]:
+    return refresh_inbox()
 
 
 def get_tools() -> list[dict[str, str]]:
@@ -368,8 +541,9 @@ def send_email(
     references: str | None = None,
     thread_id: str | None = None,
 ) -> dict[str, Any]:
-    """Refresh inbox, gửi email qua SMTP, sau đó lưu bản ghi mail đi (from_email = EMAIL_SMTP_FROM)."""
-    refresh_inbox()
+    sync_result = _refresh_for_tool()
+    if sync_result.get("status") == "error":
+        raise RuntimeError(f"Không thể đồng bộ email trước khi gửi: {sync_result.get('error') or sync_result.get('reason')}")
 
     host = (os.getenv("EMAIL_SMTP_HOST") or settings.EMAIL_SMTP_HOST).strip()
     sender = _company_email()
@@ -378,10 +552,15 @@ def send_email(
     if not recipients:
         raise ValueError("Email cần ít nhất một người nhận")
 
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    sent_message_id = f"sent-{now_iso.replace(':', '-')}@vietmas.local"
+    sent_uid = _SENT_UID_BASE - int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
+
     message = EmailMessage(policy=SMTP)
     message["From"] = sender
     message["To"] = ", ".join(recipients)
     message["Subject"] = subject
+    message["Message-ID"] = sent_message_id
     if in_reply_to:
         message["In-Reply-To"] = in_reply_to
     if references:
@@ -398,10 +577,6 @@ def send_email(
         if username:
             smtp.login(username, password)
         smtp.send_message(message)
-
-    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
-    sent_message_id = f"sent-{now_iso.replace(':', '-')}@vietmas.local"
-    sent_uid = _SENT_UID_BASE - int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
 
     resolved_thread_id = thread_id or ""
     if not resolved_thread_id and in_reply_to:
@@ -429,12 +604,17 @@ def send_email(
                 in_reply_to=in_reply_to or "",
                 references_ids=references or "",
                 imap_uid=sent_uid,
+                source_mailbox="SMTP",
             )
             conn.commit()
     except Exception:
         pass
 
-    result: dict[str, Any] = {"status": "sent", "recipients": str(len(recipients))}
+    result: dict[str, Any] = {
+        "status": "sent",
+        "recipients": str(len(recipients)),
+        "sync_status": sync_result.get("status", "success"),
+    }
     if user_id:
         result["sent_by"] = user_id
     if reply_uid is not None:
@@ -443,12 +623,18 @@ def send_email(
 
 
 def check_email(*, user_id: str | None = None) -> dict[str, Any]:
-    """Refresh inbox, filter partner emails, move non-partner emails to Other."""
-    res = refresh_inbox()
+    res = _refresh_for_tool()
+    _init_db()
+    with _get_db() as conn:
+        history_count = conn.execute("SELECT COUNT(*) FROM history_message").fetchone()[0]
     return {
         "status": res.get("status", "success"),
         "imported_partner_emails": res.get("imported_count", 0),
+        "moved_partner_emails": res.get("moved_partner_count", 0),
         "moved_other_emails": res.get("moved_other_count", 0),
+        "imported_sent_emails": res.get("imported_sent_count", 0),
+        "sent_sync_status": res.get("sent_sync_status"),
+        "history_count": history_count,
         "details": res.get("reason") or res.get("error") or "Đã làm mới inbox thành công.",
     }
 
@@ -462,12 +648,7 @@ def search_email(
     limit: int = 10,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    """Refresh inbox, sau đó tìm kiếm lịch sử email trong history_message.
-
-    Đối chiếu from_email mới nhất của mỗi thread với _company_email() (EMAIL_SMTP_FROM)
-    để xác định thread đã được phản hồi hay chưa.
-    """
-    refresh_inbox()
+    sync_result = _refresh_for_tool()
     _init_db()
 
     company = _company_email()
@@ -529,7 +710,9 @@ def search_email(
             emails.append(dict(row))
 
     return {
-        "status": "success",
+        "status": "partial" if sync_result.get("status") == "error" else "success",
+        "sync_status": sync_result.get("status", "success"),
+        "sync_error": sync_result.get("error") or sync_result.get("reason"),
         "total_results": len(emails),
         "emails": emails,
     }

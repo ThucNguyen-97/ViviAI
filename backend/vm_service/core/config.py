@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     EMAIL_IMAP_HOST: str = "imap.gmail.com"
     EMAIL_IMAP_PORT: int = 993
     EMAIL_IMAP_MAILBOX: str = "INBOX"
+    EMAIL_IMAP_PARTNER_MAILBOX: str = "Partner"
+    EMAIL_IMAP_SENT_MAILBOX: str = "[Gmail]/Sent Mail"
     EMAIL_IMAP_USERNAME: str = ""
     EMAIL_IMAP_PASSWORD: str = ""
 

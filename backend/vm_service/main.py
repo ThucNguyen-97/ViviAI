@@ -4,8 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from llm.adapters import LlmProviderError
 from llm.router import llm_router
 from llm.schemas import LlmGenerateRequest, LlmGenerateResponse, RouterStatusResponse
-from orchestrator.chat import router as chat_router
-from mcp_tools.mcp_catalog import catalog_as_rows, refresh_mcp_catalog
+from _1__ai_firewall.router import router as chat_router
+from _3__executor.mcp_tools.mcp_catalog import catalog_as_rows, refresh_mcp_catalog
 from runtime.rag_catalog import refresh_rag_catalog
 
 app = FastAPI(title="VietMAS VM Service", version="0.3.0")
@@ -81,7 +81,7 @@ async def email_history(
     có from_email KHÁC địa chỉ công ty (EMAIL_SMTP_FROM).
     """
     import sqlite3
-    from mcp_tools.email_mcp.server import DB_PATH, _company_email, _init_db
+    from _3__executor.mcp_tools.email_mcp.server import DB_PATH, _company_email, _init_db
 
     _init_db()
     company = _company_email()

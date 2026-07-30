@@ -11,13 +11,13 @@ SERVICE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SERVICE_ROOT not in sys.path:
     sys.path.insert(0, SERVICE_ROOT)
 
-from firewall.schemas import ExecutionPlan, ExecutionStep, FirewallDecision  # noqa: E402
+from _1__ai_firewall.schemas import ExecutionPlan, ExecutionStep, FirewallDecision  # noqa: E402
 from llm.schemas import LlmGenerateResponse, TokenUsage  # noqa: E402
-from orchestrator.chat import (  # noqa: E402
-    _intent_from_plan,
+from _2__planner.planner import (  # noqa: E402
     create_execution_plan,
-    execute_plan,
+    intent_from_plan,
 )
+from _3__executor.executor import execute_plan  # noqa: E402
 
 
 def _plan(*actions: str) -> ExecutionPlan:
@@ -35,19 +35,19 @@ def _plan(*actions: str) -> ExecutionPlan:
 
 class IntentFromPlanTests(unittest.TestCase):
     def test_rag_plan(self):
-        self.assertEqual(_intent_from_plan(_plan("rag_search", "llm_synthesize")), "rag_query")
+        self.assertEqual(intent_from_plan(_plan("rag_search", "llm_synthesize")), "rag_query")
 
     def test_business_plan(self):
-        self.assertEqual(_intent_from_plan(_plan("sql_query", "llm_synthesize")), "business_query")
+        self.assertEqual(intent_from_plan(_plan("sql_query", "llm_synthesize")), "business_query")
 
     def test_mcp_plan(self):
         self.assertEqual(
-            _intent_from_plan(_plan("mcp:email_mcp.search_email", "llm_synthesize")),
+            intent_from_plan(_plan("mcp:email_mcp.search_email", "llm_synthesize")),
             "task_execution",
         )
 
     def test_general_plan(self):
-        self.assertEqual(_intent_from_plan(_plan("llm_synthesize")), "general_chat")
+        self.assertEqual(intent_from_plan(_plan("llm_synthesize")), "general_chat")
 
 
 class CreateExecutionPlanTests(unittest.IsolatedAsyncioTestCase):
@@ -61,9 +61,9 @@ class CreateExecutionPlanTests(unittest.IsolatedAsyncioTestCase):
             latency_ms=1,
         )
 
-        with patch("orchestrator.chat.llm_router.generate", AsyncMock(return_value=planner_response)):
-            with patch("orchestrator.chat.refresh_rag_catalog", AsyncMock(return_value=[])):
-                with patch("orchestrator.chat.render_for_planner", return_value="(no mcp tools)"):
+        with patch("_2__planner.planner.llm_router.generate", AsyncMock(return_value=planner_response)):
+            with patch("_2__planner.planner.refresh_rag_catalog", AsyncMock(return_value=[])):
+                with patch("_2__planner.planner.render_for_planner", return_value="(no mcp tools)"):
                     plan = await create_execution_plan(
                         "ban la ai? ban co the giup ich duoc gi?",
                         MagicMock(user_id="u1", role="admin"),
@@ -82,9 +82,9 @@ class CreateExecutionPlanTests(unittest.IsolatedAsyncioTestCase):
             latency_ms=1,
         )
 
-        with patch("orchestrator.chat.llm_router.generate", AsyncMock(return_value=planner_response)):
-            with patch("orchestrator.chat.refresh_rag_catalog", AsyncMock(return_value=[])):
-                with patch("orchestrator.chat.render_for_planner", return_value="email_mcp.check_email"):
+        with patch("_2__planner.planner.llm_router.generate", AsyncMock(return_value=planner_response)):
+            with patch("_2__planner.planner.refresh_rag_catalog", AsyncMock(return_value=[])):
+                with patch("_2__planner.planner.render_for_planner", return_value="email_mcp.check_email"):
                     plan = await create_execution_plan(
                         "hay kiem tra hom thu giup toi, xem co thu nao moi khong",
                         MagicMock(user_id="u1", role="admin"),
@@ -97,17 +97,17 @@ class CreateExecutionPlanTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_planner_fallback_without_files(self):
-        with patch("orchestrator.chat.llm_router.generate", AsyncMock(side_effect=RuntimeError("planner down"))):
-            with patch("orchestrator.chat.refresh_rag_catalog", AsyncMock(return_value=[])):
-                with patch("orchestrator.chat.render_for_planner", return_value="(no mcp tools)"):
+        with patch("_2__planner.planner.llm_router.generate", AsyncMock(side_effect=RuntimeError("planner down"))):
+            with patch("_2__planner.planner.refresh_rag_catalog", AsyncMock(return_value=[])):
+                with patch("_2__planner.planner.render_for_planner", return_value="(no mcp tools)"):
                     plan = await create_execution_plan("Xin chao", MagicMock(user_id="u1", role="admin"), [])
 
         self.assertEqual(plan.steps[0].action, "llm_synthesize")
 
     async def test_planner_fallback_with_files(self):
-        with patch("orchestrator.chat.llm_router.generate", AsyncMock(side_effect=RuntimeError("planner down"))):
-            with patch("orchestrator.chat.refresh_rag_catalog", AsyncMock(return_value=[])):
-                with patch("orchestrator.chat.render_for_planner", return_value="(no mcp tools)"):
+        with patch("_2__planner.planner.llm_router.generate", AsyncMock(side_effect=RuntimeError("planner down"))):
+            with patch("_2__planner.planner.refresh_rag_catalog", AsyncMock(return_value=[])):
+                with patch("_2__planner.planner.render_for_planner", return_value="(no mcp tools)"):
                     files = [MagicMock(original_file_name="note.md", file_type="md", flags=[])]
                     plan = await create_execution_plan("Phan tich file", MagicMock(user_id="u1", role="admin"), files)
 
@@ -127,8 +127,8 @@ class ExecutePlanTests(unittest.IsolatedAsyncioTestCase):
             latency_ms=1,
         )
 
-        with patch("orchestrator.chat.ek_client.rag_search", AsyncMock(return_value=rag_payload)):
-            with patch("orchestrator.chat._synthesize_answer", AsyncMock(return_value=llm_response)) as synthesize:
+        with patch("_3__executor.executor.ek_client.rag_search", AsyncMock(return_value=rag_payload)):
+            with patch("_3__executor.executor.synthesize_answer", AsyncMock(return_value=llm_response)) as synthesize:
                 response, executions = await execute_plan(
                     "Chinh sach chiet khau?",
                     MagicMock(user_id="u1", role="admin"),
@@ -150,8 +150,8 @@ class ExecutePlanTests(unittest.IsolatedAsyncioTestCase):
             latency_ms=0,
         )
 
-        with patch("orchestrator.chat._run_sql_query", AsyncMock(return_value={"denied": True, "content": denied.content})):
-            with patch("orchestrator.chat._synthesize_answer", AsyncMock(return_value=denied)) as synthesize:
+        with patch("_3__executor.executor._run_sql_query", AsyncMock(return_value={"denied": True, "content": denied.content})):
+            with patch("_3__executor.executor.synthesize_answer", AsyncMock(return_value=denied)) as synthesize:
                 response, _ = await execute_plan(
                     "Tong doanh thu?",
                     MagicMock(user_id="mgr-1", role="manager"),
@@ -164,7 +164,7 @@ class ExecutePlanTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mcp_send_email_short_circuits_answer(self):
         with patch(
-            "orchestrator.chat.dispatch_mcp_action",
+            "_3__executor.executor.dispatch_mcp_action",
             AsyncMock(return_value={"status": "sent"}),
         ) as dispatch:
             response, executions = await execute_plan(
@@ -178,7 +178,6 @@ class ExecutePlanTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.content, "Đã gửi email thành công.")
         self.assertEqual(executions[0]["status"], "success")
 
-
     async def test_check_email_executes_with_user_scope_and_synthesizes_once(self):
         llm_response = LlmGenerateResponse(
             provider="google",
@@ -190,10 +189,10 @@ class ExecutePlanTests(unittest.IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "orchestrator.chat.dispatch_mcp_action",
+            "_3__executor.executor.dispatch_mcp_action",
             AsyncMock(return_value={"status": "success", "imported_partner_emails": 2}),
         ) as dispatch:
-            with patch("orchestrator.chat._synthesize_answer", AsyncMock(return_value=llm_response)) as synthesize:
+            with patch("_3__executor.executor.synthesize_answer", AsyncMock(return_value=llm_response)) as synthesize:
                 response, executions = await execute_plan(
                     "Hãy kiểm tra hòm thư giúp tôi, xem có thư nào mới không",
                     MagicMock(user_id="u1", role="admin"),
@@ -209,7 +208,7 @@ class ExecutePlanTests(unittest.IsolatedAsyncioTestCase):
 
 class ChatEndpointFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_firewall_reject_skips_planner(self):
-        from orchestrator import chat as chat_module
+        from _1__ai_firewall import router as router_module
 
         rejected_firewall = FirewallDecision(
             is_valid=False,
@@ -223,32 +222,37 @@ class ChatEndpointFlowTests(unittest.IsolatedAsyncioTestCase):
         async def fake_gate():
             yield
 
-        with patch.object(chat_module, "redis_concurrency_gate", fake_gate):
-            with patch.object(chat_module, "set_runtime_state", AsyncMock()):
-                with patch.object(chat_module, "process_uploads", AsyncMock(return_value=[])):
-                    with patch.object(chat_module, "check_message", AsyncMock(return_value=rejected_firewall)):
-                        with patch.object(chat_module, "create_execution_plan", AsyncMock()) as planner:
-                            with patch.object(chat_module.ek_client, "create_conversation", AsyncMock(return_value="conv-1")):
+        with patch.object(router_module, "redis_concurrency_gate", fake_gate):
+            with patch.object(router_module, "set_runtime_state", AsyncMock()):
+                with patch.object(router_module, "process_uploads", AsyncMock(return_value=[])):
+                    with patch.object(router_module, "check_message", AsyncMock(return_value=rejected_firewall)):
+                        with patch.object(router_module, "create_execution_plan", AsyncMock()) as planner:
+                            with patch.object(router_module.observer, "create_conversation", AsyncMock(return_value="conv-1")):
                                 with patch.object(
-                                    chat_module.ek_client,
-                                    "create_message",
-                                    AsyncMock(side_effect=[{"id": "msg-u"}, {"id": "msg-a"}]),
+                                    router_module.observer,
+                                    "record_user_message",
+                                    AsyncMock(return_value={"id": "msg-u"}),
                                 ):
-                                    response = await chat_module.chat(
-                                        request=MagicMock(form=AsyncMock(return_value=MagicMock(getlist=lambda _: []))),
-                                        message="Lay du lieu nhay cam",
-                                        conversation_id=None,
-                                        x_user_id="u1",
-                                        x_user_email="u1@test.local",
-                                        x_user_role="manager",
-                                    )
+                                    with patch.object(
+                                        router_module.observer,
+                                        "record_assistant_message",
+                                        AsyncMock(return_value={"id": "msg-a"}),
+                                    ):
+                                        response = await router_module.chat(
+                                            request=MagicMock(form=AsyncMock(return_value=MagicMock(getlist=lambda _: []))),
+                                            message="Lay du lieu nhay cam",
+                                            conversation_id=None,
+                                            x_user_id="u1",
+                                            x_user_email="u1@test.local",
+                                            x_user_role="manager",
+                                        )
 
         planner.assert_not_called()
         self.assertEqual(response.status, "rejected")
         self.assertEqual(response.intent, "general_chat")
 
     async def test_allowed_request_runs_planner_then_executor(self):
-        from orchestrator import chat as chat_module
+        from _1__ai_firewall import router as router_module
 
         allowed_firewall = FirewallDecision(is_valid=True, allowed=True, risk_level="low", reason="")
         sample_plan = _plan("llm_synthesize")
@@ -265,27 +269,32 @@ class ChatEndpointFlowTests(unittest.IsolatedAsyncioTestCase):
         async def fake_gate():
             yield
 
-        with patch.object(chat_module, "redis_concurrency_gate", fake_gate):
-            with patch.object(chat_module, "set_runtime_state", AsyncMock()):
-                with patch.object(chat_module, "process_uploads", AsyncMock(return_value=[])):
-                    with patch.object(chat_module, "check_message", AsyncMock(return_value=allowed_firewall)):
-                        with patch.object(chat_module, "create_execution_plan", AsyncMock(return_value=sample_plan)) as planner:
-                            with patch.object(chat_module, "execute_plan", AsyncMock(return_value=(llm_response, []))) as executor:
-                                with patch.object(chat_module.ek_client, "create_conversation", AsyncMock(return_value="conv-2")):
+        with patch.object(router_module, "redis_concurrency_gate", fake_gate):
+            with patch.object(router_module, "set_runtime_state", AsyncMock()):
+                with patch.object(router_module, "process_uploads", AsyncMock(return_value=[])):
+                    with patch.object(router_module, "check_message", AsyncMock(return_value=allowed_firewall)):
+                        with patch.object(router_module, "create_execution_plan", AsyncMock(return_value=sample_plan)) as planner:
+                            with patch.object(router_module, "execute_plan", AsyncMock(return_value=(llm_response, []))) as executor:
+                                with patch.object(router_module.observer, "create_conversation", AsyncMock(return_value="conv-2")):
                                     with patch.object(
-                                        chat_module.ek_client,
-                                        "create_message",
-                                        AsyncMock(side_effect=[{"id": "msg-u2"}, {"id": "msg-a2"}]),
+                                        router_module.observer,
+                                        "record_user_message",
+                                        AsyncMock(return_value={"id": "msg-u2"}),
                                     ):
-                                        with patch.object(chat_module.ek_client, "create_agent_plan", AsyncMock()):
-                                            response = await chat_module.chat(
-                                                request=MagicMock(form=AsyncMock(return_value=MagicMock(getlist=lambda _: []))),
-                                                message="Xin chao",
-                                                conversation_id=None,
-                                                x_user_id="u2",
-                                                x_user_email="u2@test.local",
-                                                x_user_role="admin",
-                                            )
+                                        with patch.object(
+                                            router_module.observer,
+                                            "record_assistant_message",
+                                            AsyncMock(return_value={"id": "msg-a2"}),
+                                        ):
+                                            with patch.object(router_module.observer, "record_agent_plan", AsyncMock()):
+                                                response = await router_module.chat(
+                                                    request=MagicMock(form=AsyncMock(return_value=MagicMock(getlist=lambda _: []))),
+                                                    message="Xin chao",
+                                                    conversation_id=None,
+                                                    x_user_id="u2",
+                                                    x_user_email="u2@test.local",
+                                                    x_user_role="admin",
+                                                )
 
         planner.assert_awaited_once()
         executor.assert_awaited_once()

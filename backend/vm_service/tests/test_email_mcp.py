@@ -10,24 +10,30 @@
 import asyncio
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
+from pathlib import Path
 
 SERVICE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if SERVICE_ROOT not in sys.path:
     sys.path.insert(0, SERVICE_ROOT)
 
-from mcp_tools.dispatcher import dispatch_mcp_action  # noqa: E402
-from mcp_tools.email_mcp.server import (  # noqa: E402
-    DB_PATH,
+from _3__executor.mcp_tools.dispatcher import dispatch_mcp_action  # noqa: E402
+import _3__executor.mcp_tools.email_mcp.server as email_server  # noqa: E402
+from _3__executor.mcp_tools.email_mcp.server import (  # noqa: E402
     _get_db,
     _init_db,
     _insert_message,
 )
-from mcp_tools.mcp_catalog import catalog_as_rows  # noqa: E402
+from _3__executor.mcp_tools.mcp_catalog import catalog_as_rows  # noqa: E402
 
 
-# ─── Fake SMTP ────────────────────────────────────────────────────────────────
+_TEST_DB_PATH = Path(tempfile.gettempdir()) / f"vietmas_email_mcp_test_{os.getpid()}.db"
+if _TEST_DB_PATH.exists():
+    _TEST_DB_PATH.unlink()
+email_server.DB_PATH = _TEST_DB_PATH
+
 
 class FakeSMTP:
     sent_messages: list = []
@@ -50,8 +56,6 @@ class FakeSMTP:
     def send_message(self, message):
         FakeSMTP.sent_messages.append(message)
 
-
-# ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _seed(
     *,
@@ -98,8 +102,6 @@ SMTP_ENV = {
 }
 
 
-# ─── Catalog test ─────────────────────────────────────────────────────────────
-
 class TestCatalog(unittest.TestCase):
     def test_all_three_tools_registered_with_correct_names(self):
         rows = catalog_as_rows()
@@ -110,24 +112,15 @@ class TestCatalog(unittest.TestCase):
         self.assertNotIn("search_mail", email_tools, "Tên cũ search_mail không còn tồn tại")
 
 
-# ─── Kịch bản 1: Gửi lời chào ─────────────────────────────────────────────────
-
 class TestCase1_SendGreeting(unittest.TestCase):
-    """
-    Người dùng: "Hãy gửi một lời chào qua mail cho nguyenquangthuc.info@gmail.com"
-    Kỳ vọng:
-    - SMTP nhận đúng địa chỉ, tiêu đề
-    - Mail đi được ghi vào history_message với from_email = EMAIL_SMTP_FROM
-    """
-
     def setUp(self):
         _init_db()
         FakeSMTP.sent_messages.clear()
 
     def test_send_email_recorded_in_history_with_company_email(self):
         with patch.dict(os.environ, SMTP_ENV, clear=False), \
-             patch("mcp_tools.email_mcp.server.smtplib.SMTP", FakeSMTP), \
-             patch("mcp_tools.email_mcp.server.refresh_inbox",
+             patch("_3__executor.mcp_tools.email_mcp.server.smtplib.SMTP", FakeSMTP), \
+             patch("_3__executor.mcp_tools.email_mcp.server.refresh_inbox",
                    return_value={"status": "skipped", "imported_count": 0, "moved_other_count": 0}):
 
             result = asyncio.run(dispatch_mcp_action(
@@ -145,7 +138,6 @@ class TestCase1_SendGreeting(unittest.TestCase):
         self.assertEqual(msg["To"], "nguyenquangthuc.info@gmail.com")
         self.assertIn("Xin chào", msg.get_content())
 
-        # Kiểm tra mail đi được ghi vào history_message với from_email của công ty
         with _get_db() as conn:
             row = conn.execute(
                 "SELECT * FROM history_message WHERE LOWER(from_email)='company@vietmas.demo' ORDER BY id DESC LIMIT 1"
@@ -155,25 +147,11 @@ class TestCase1_SendGreeting(unittest.TestCase):
         self.assertIn("Lời chào", row["subject"])
 
 
-# ─── Kịch bản 2: Thread chưa phản hồi ────────────────────────────────────────
-
 class TestCase2_UnrepliedThreads(unittest.TestCase):
-    """
-    Người dùng: "Kiểm tra hòm thư xem có thư mới nào mà CÔNG TY TA CHƯA PHẢN HỒI không?"
-
-    Thiết lập 2 thread:
-      - Thread A: partner gửi đến (id=1), công ty chưa reply → CHƯA PHẢN HỒI
-      - Thread B: partner gửi (id=2), công ty reply (id=3, from_email=company) → ĐÃ PHẢN HỒI
-
-    Kỳ vọng only_unreplied=True chỉ trả về Thread A.
-    """
-
     def setUp(self):
         _init_db()
-        # Thread A — chưa phản hồi
         _seed(from_email="partner@anphat.com", subject="Yêu cầu báo giá",
               imap_uid=100, message_id="msg-100@anphat.com", thread_id="thread-A")
-        # Thread B — partner gửi, công ty đã reply
         _seed(from_email="supplier@binhminh.com", subject="Xác nhận đơn hàng",
               imap_uid=200, message_id="msg-200@binhminh.com", thread_id="thread-B")
         _seed(from_email="company@vietmas.demo", subject="Re: Xác nhận đơn hàng",
@@ -181,7 +159,7 @@ class TestCase2_UnrepliedThreads(unittest.TestCase):
               in_reply_to="msg-200@binhminh.com")
 
     def test_only_unreplied_returns_only_thread_a(self):
-        with patch("mcp_tools.email_mcp.server.refresh_inbox",
+        with patch("_3__executor.mcp_tools.email_mcp.server.refresh_inbox",
                    return_value={"status": "success", "imported_count": 0, "moved_other_count": 0}), \
              patch.dict(os.environ, {"EMAIL_SMTP_FROM": "company@vietmas.demo"}, clear=False):
 
@@ -192,19 +170,15 @@ class TestCase2_UnrepliedThreads(unittest.TestCase):
 
         self.assertEqual(result["status"], "success")
         subjects = [e["subject"] for e in result["emails"]]
-        # Thread A phải xuất hiện
         self.assertIn("Yêu cầu báo giá", subjects)
-        # Thread B KHÔNG được xuất hiện (đã phản hồi)
         self.assertNotIn("Xác nhận đơn hàng", subjects)
         self.assertNotIn("Re: Xác nhận đơn hàng", subjects)
 
     def test_insert_or_ignore_preserves_existing_records(self):
-        """INSERT OR IGNORE: chèn lại cùng message_id phải bị bỏ qua, không tăng ID."""
         with _get_db() as conn:
             id_before = conn.execute(
                 "SELECT id FROM history_message WHERE message_id='msg-100@anphat.com'"
             ).fetchone()["id"]
-            # Cố tình insert lại cùng message_id
             _insert_message(
                 conn,
                 date="Wed, 29 Jul 2026 10:00:00 +0700",
@@ -228,13 +202,7 @@ class TestCase2_UnrepliedThreads(unittest.TestCase):
         self.assertEqual(id_before, id_after, "ID không được thay đổi khi INSERT OR IGNORE")
 
 
-# ─── Kịch bản 3: Tìm mail theo ngày và từ khóa ───────────────────────────────
-
 class TestCase3_SearchByDateAndKeyword(unittest.TestCase):
-    """
-    Người dùng: "tìm cho tôi mail nào gửi lúc 2026-07-28"
-    """
-
     def setUp(self):
         _init_db()
         _seed(from_email="partner@anphat.com", subject="Họp review ngày 28",
@@ -247,7 +215,7 @@ class TestCase3_SearchByDateAndKeyword(unittest.TestCase):
               date="Thu, 10 Jul 2026 14:00:00 +0700")
 
     def test_date_from_filter_excludes_older_emails(self):
-        with patch("mcp_tools.email_mcp.server.refresh_inbox",
+        with patch("_3__executor.mcp_tools.email_mcp.server.refresh_inbox",
                    return_value={"status": "success", "imported_count": 0, "moved_other_count": 0}):
             result = asyncio.run(dispatch_mcp_action(
                 "mcp:email_mcp.search_email",
@@ -259,7 +227,7 @@ class TestCase3_SearchByDateAndKeyword(unittest.TestCase):
         self.assertNotIn("Họp định kỳ ngày 10", subjects)
 
     def test_keyword_search_in_subject_and_body(self):
-        with patch("mcp_tools.email_mcp.server.refresh_inbox",
+        with patch("_3__executor.mcp_tools.email_mcp.server.refresh_inbox",
                    return_value={"status": "success", "imported_count": 0, "moved_other_count": 0}):
             result = asyncio.run(dispatch_mcp_action(
                 "mcp:email_mcp.search_email",
